@@ -103,7 +103,7 @@ def analyze(
 
             if verbose:
                 # Show timing info
-                click.echo(f"  Tempo: {song.primary_tempo:.1f} BPM, Time sig: {song.primary_time_signature}")
+                click.echo(f"  Tempo: {song.primary_tempo:.1f} BPM, Time sig: {song.primary_time_sig}")
                 click.echo(f"  Duration: {song.duration_beats:.1f} beats")
 
                 # Detect chord progression
