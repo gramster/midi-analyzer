@@ -212,6 +212,29 @@ class MetadataExtractor:
                         confidence=0.6,
                     )
 
+        # Also try underscore as separator (common in some collections)
+        if "_" in filename and " " not in filename:
+            # Check for patterns like "Artist_Name_-_Song_Title" or "Artist_Song"
+            parts = filename.split("_")
+            
+            # Look for a dash separator within underscore-separated parts
+            dash_idx = None
+            for i, part in enumerate(parts):
+                if part == "-" or part == "":
+                    dash_idx = i
+                    break
+            
+            if dash_idx is not None and dash_idx > 0:
+                artist = " ".join(parts[:dash_idx]).title()
+                title = " ".join(p for p in parts[dash_idx + 1 :] if p).title()
+                if artist and title:
+                    return SongMetadata(
+                        artist=artist,
+                        title=title,
+                        source="filename_underscore",
+                        confidence=0.5,
+                    )
+
         return SongMetadata()
 
     def _parse_nonstop2k_format(self, filename: str) -> SongMetadata:
@@ -300,16 +323,46 @@ class MetadataExtractor:
         )
 
     def _parse_hyphenated_words(self, filename: str) -> SongMetadata:
-        """Parse hyphen-separated words as a title (no artist)."""
-        if "-" in filename:
-            title = filename.replace("-", " ").title()
+        """Parse hyphen-separated words, attempting to split artist and title."""
+        if "-" not in filename:
+            return SongMetadata()
+
+        parts = [p.strip() for p in filename.split("-") if p.strip()]
+        
+        # Filter out numeric-only parts (timestamps, track numbers)
+        parts = [p for p in parts if not p.isdigit()]
+        
+        if not parts:
+            return SongMetadata()
+        
+        if len(parts) == 1:
+            # Single part - just a title
             return SongMetadata(
-                title=title,
+                title=parts[0].title(),
                 source="filename_hyphenated",
                 confidence=0.3,
             )
-
-        return SongMetadata()
+        
+        if len(parts) == 2:
+            # Two parts - likely "Artist - Title"
+            return SongMetadata(
+                artist=parts[0].title(),
+                title=parts[1].title(),
+                source="filename_hyphenated",
+                confidence=0.5,
+            )
+        
+        # For 3+ parts, use first part as artist, rest as title
+        # This handles cases like "Artist-Song-Name-Extended-Mix"
+        artist = parts[0].title()
+        title = " ".join(parts[1:]).title()
+        
+        return SongMetadata(
+            artist=artist,
+            title=title,
+            source="filename_hyphenated",
+            confidence=0.4,
+        )
 
     def _merge_metadata(
         self,
