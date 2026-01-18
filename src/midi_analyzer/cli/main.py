@@ -109,8 +109,8 @@ def analyze(
                 # Detect chord progression
                 chords = detect_chord_progression_for_song(song)
                 if chords.chords:
-                    chord_symbols = [c.chord.symbol for c in chords.chords[:8]]
-                    progression = " → ".join(chord_symbols)
+                    chord_names = [c.chord.name for c in chords.chords[:8]]
+                    progression = " → ".join(chord_names)
                     if len(chords.chords) > 8:
                         progression += " ..."
                     click.echo(f"  Chords: {progression}")
