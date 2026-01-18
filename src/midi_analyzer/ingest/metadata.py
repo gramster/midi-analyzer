@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import mido
 
+from midi_analyzer.ingest.nonstop2k_artists import NONSTOP2K_ARTISTS
 from midi_analyzer.models.core import SongMetadata
 
 if TYPE_CHECKING:
@@ -214,26 +215,71 @@ class MetadataExtractor:
         return SongMetadata()
 
     def _parse_nonstop2k_format(self, filename: str) -> SongMetadata:
-        """Parse nonstop2k format: artist-maybe-more-title-words.
+        """Parse nonstop2k format using known artist database.
 
-        Example: le-youth-jerro-lizzy-land-lost -> "Le Youth Jerro Lizzy" / "Land Lost"
-        Example: adriatique-whomadewho-miracle -> "Adriatique Whomadewho" / "Miracle"
+        Uses the NONSTOP2K_ARTISTS database to find the longest matching
+        artist name prefix, then treats the remainder as the title.
         
-        Heuristics:
-        - Remove numeric-only parts (often IDs added by scrapers)
-        - For 3 parts: first 2 are artist, last 1 is title
-        - For 4+ parts: first half is artist, second half is title
+        Example: adriatique-whomadewho-miracle -> "Adriatique" + "Whomadewho" / "Miracle"
         """
-        # Split on hyphens
-        parts = filename.lower().split("-")
-        
-        # Filter out pure numeric parts (like "23671" IDs)
-        parts = [p for p in parts if not p.isdigit()]
+        # Split on hyphens - keep all parts for artist matching
+        all_parts = filename.lower().split("-")
 
+        if len(all_parts) < 2:
+            return SongMetadata()
+
+        # Try to find known artists by matching prefixes
+        # Check for multiple artists (collaborations)
+        found_artists: list[str] = []
+        remaining_parts = all_parts[:]
+        
+        while remaining_parts:
+            # Try progressively shorter prefixes to find an artist match
+            matched = False
+            for end_idx in range(len(remaining_parts), 0, -1):
+                candidate_slug = "-".join(remaining_parts[:end_idx])
+                if candidate_slug in NONSTOP2K_ARTISTS:
+                    found_artists.append(NONSTOP2K_ARTISTS[candidate_slug])
+                    remaining_parts = remaining_parts[end_idx:]
+                    matched = True
+                    break
+            
+            if not matched:
+                # No more artists found, rest is title
+                break
+
+        # Filter numeric-only parts from remaining (title) parts
+        title_parts = [p for p in remaining_parts if not p.isdigit()]
+
+        if found_artists and title_parts:
+            # Found at least one artist and have title remaining
+            artist = ", ".join(found_artists)
+            title = " ".join(title_parts).title()
+            
+            return SongMetadata(
+                artist=artist,
+                title=title,
+                source="filename_nonstop2k",
+                confidence=0.8,  # High confidence with known artists
+            )
+        elif found_artists:
+            # Found artists but no title - unusual, low confidence
+            artist = ", ".join(found_artists)
+            return SongMetadata(
+                artist=artist,
+                title="",
+                source="filename_nonstop2k",
+                confidence=0.3,
+            )
+        
+        # No known artists found - fall back to heuristic
+        # Filter numeric parts for heuristic fallback
+        parts = [p for p in all_parts if not p.isdigit()]
+        
         if len(parts) < 3:
             return SongMetadata()
 
-        # For 3 parts: artist-artist-title or artist-title-title
+        # For 3 parts: first 2 are artist, last 1 is title
         if len(parts) == 3:
             title_start = 2
         else:
@@ -249,7 +295,7 @@ class MetadataExtractor:
         return SongMetadata(
             artist=artist,
             title=title,
-            source="filename_nonstop2k",
+            source="filename_nonstop2k_heuristic",
             confidence=0.4,
         )
 
