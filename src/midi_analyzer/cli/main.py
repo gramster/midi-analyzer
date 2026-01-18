@@ -99,7 +99,7 @@ def analyze(
             key = detect_key_for_song(song)
 
             # Basic summary line
-            click.echo(f"\n{file_path.name}: {key.key.name} {key.mode.value} ({len(song.tracks)} tracks)")
+            click.echo(f"\n{file_path.name}: {key.root_name} {key.mode.value} ({len(song.tracks)} tracks)")
 
             if verbose:
                 # Show timing info
