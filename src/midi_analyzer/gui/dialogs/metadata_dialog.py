@@ -166,17 +166,26 @@ class MetadataDialog(QDialog):
     def _load_data(self) -> None:
         """Load current data into the form."""
         # Try to extract name from metadata
+        import mido
+
         from midi_analyzer.ingest.metadata import MetadataExtractor
-        
+
         extractor = MetadataExtractor()
-        metadata = extractor.extract(self._clip.source_path)
-        
+
+        # Load the MIDI file to get embedded metadata
+        try:
+            midi_file = mido.MidiFile(self._clip.source_path)
+            metadata = extractor.extract(self._clip.source_path, midi_file)
+        except Exception:
+            # Fallback if we can't load the MIDI file
+            metadata = extractor.extract(self._clip.source_path)
+
         # Use extracted title if available, otherwise fallback to filename
         name = metadata.title or Path(self._clip.source_path).stem
         if metadata.artist and not self._clip.artist:
             # Also pre-fill artist if we found one and there isn't one already
             self.artist_input.setText(metadata.artist)
-        
+
         self.name_label.setText(name)
         self.path_label.setText(self._clip.source_path)
         if self._clip.artist:
