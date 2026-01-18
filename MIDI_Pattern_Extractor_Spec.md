@@ -9,10 +9,10 @@ The output is a **pattern corpus** that can later drive groove templates, chord 
 ## 1. Goals
 
 - Dissect MIDI songs into **reusable musical patterns**
-- Infer **track roles** (drums, bass, chords, lead, arp, pad)
-- Extract **rhythmic, melodic, harmonic, and arpeggiated motifs**
 - Use song title and artists to perform a web search and attempt to retrieve genre information and
 descriptive tags
+- Infer **track roles** (drums, bass, chords, lead, arp, pad)
+- Extract **rhythmic, melodic, harmonic, and arpeggiated motifs**
 - Build a searchable **pattern library** indexed by role, meter, density, harmony, genre, tags
 - Keep the system modular, deterministic, and explainable (no black-box ML in v1)
 
