@@ -79,7 +79,10 @@ class MetadataExtractor:
             for msg in track:
                 if msg.type == "track_name" and not title:
                     # First track name often contains the title
-                    title = msg.name
+                    candidate = msg.name
+                    # Skip if it looks like a filename (has dashes, timestamps, domains)
+                    if not self._looks_like_filename(candidate):
+                        title = candidate
                 elif msg.type == "copyright":
                     copyright_text = msg.text
                 elif msg.type == "text":
@@ -96,6 +99,32 @@ class MetadataExtractor:
             source="midi_metadata" if (artist or title) else "unknown",
             confidence=0.7 if title else 0.0,
         )
+
+    def _looks_like_filename(self, text: str) -> bool:
+        """Check if text looks like a filename rather than a proper title."""
+        if not text:
+            return False
+        
+        text_lower = text.lower()
+        
+        # Check for domain suffixes
+        for domain in self.DOMAIN_SUFFIXES:
+            if domain in text_lower:
+                return True
+        
+        # Check for timestamp patterns (8+ digits)
+        if self.TIMESTAMP_PATTERN.search(text):
+            return True
+        
+        # Check for file extension
+        if text_lower.endswith(('.mid', '.midi', '.kar')):
+            return True
+        
+        # Check for many dashes (likely nonstop2k format)
+        if text.count('-') >= 3:
+            return True
+        
+        return False
 
     def _extract_artist_from_copyright(self, copyright_text: str) -> str:
         """Try to extract artist name from copyright text."""
