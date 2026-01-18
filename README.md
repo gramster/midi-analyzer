@@ -11,6 +11,7 @@ Analyze MIDI files to extract reusable musical patterns for generative music sys
 - **Genre Tagging** — Retrieve genre/tags via MusicBrainz, with canonical taxonomy normalization
 - **Clip Library** — Index and query tracks by genre, artist, and instrument role
 - **MIDI Export** — Export individual tracks or clips to MIDI files
+- **MIDI Playback** — Play tracks with auto-instrument selection based on track role
 - **Batch Processing** — Process large collections with parallel workers and checkpointing
 
 ## Installation
@@ -26,6 +27,9 @@ source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 
 # Install in development mode
 pip install -e ".[dev]"
+
+# Install with player support (optional)
+pip install -e ".[player]"
 ```
 
 ## Quick Start
@@ -75,6 +79,25 @@ clips = library.query(ClipQuery(
 for clip in clips:
     track = library.load_track(clip)
     export_track(track, f"bass_{clip.clip_id}.mid", tempo_bpm=120)
+```
+
+### Play MIDI Clips
+
+```python
+from midi_analyzer.player import MidiPlayer, PlaybackOptions, get_instrument_name
+from midi_analyzer.analysis import classify_track_role
+
+# Play a track with auto-instrument based on role
+with MidiPlayer() as player:
+    role = classify_track_role(track)
+    print(f"Playing {role.name} track")
+    player.play_track(track, PlaybackOptions(tempo_bpm=120))
+
+# List available MIDI devices
+from midi_analyzer.player import list_midi_devices
+for device_id, name, is_output in list_midi_devices():
+    if is_output:
+        print(f"  [{device_id}] {name}")
 ```
 
 ### Normalize Genre Tags
@@ -136,6 +159,20 @@ midi-analyzer export abc123_0 --format midi -o output.mid
 
 # Show statistics
 midi-analyzer stats
+
+# --- Playback Commands ---
+
+# Play a MIDI file
+midi-analyzer play song.mid
+
+# Play a clip from the library
+midi-analyzer play abc123_0
+
+# Play with options
+midi-analyzer play song.mid --tempo 140 --transpose -2 --loop
+
+# List MIDI output devices
+midi-analyzer list-devices
 ```
 
 ## Python API Reference
@@ -150,6 +187,7 @@ midi-analyzer stats
 | `midi_analyzer.metadata` | MusicBrainz integration, genre normalization |
 | `midi_analyzer.library` | Clip indexing and querying |
 | `midi_analyzer.export` | MIDI file export |
+| `midi_analyzer.player` | MIDI playback with role-based instruments |
 | `midi_analyzer.storage` | SQLite repository, search |
 | `midi_analyzer.processing` | Batch processing |
 
@@ -168,6 +206,9 @@ from midi_analyzer.library import ClipLibrary, ClipQuery, ClipInfo
 
 # Export
 from midi_analyzer.export import export_track, export_tracks, extract_clip
+
+# Playback
+from midi_analyzer.player import MidiPlayer, PlaybackOptions, list_midi_devices
 
 # Metadata
 from midi_analyzer.metadata import GenreNormalizer, search_recording

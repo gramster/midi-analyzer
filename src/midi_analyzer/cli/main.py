@@ -557,5 +557,150 @@ def export(
             click.echo(f"Exported to {output}")
 
 
+@cli.command()
+@click.argument("source")
+@click.option("--tempo", type=float, default=120.0, help="Playback tempo in BPM.")
+@click.option("--transpose", type=int, default=0, help="Semitones to transpose.")
+@click.option("--loop", is_flag=True, help="Loop playback.")
+@click.option("--instrument", type=int, help="Override instrument (GM program 0-127).")
+@click.option(
+    "-d",
+    "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path (for clip playback).",
+)
+@click.pass_context
+def play(
+    ctx: click.Context,
+    source: str,
+    tempo: float,
+    transpose: int,
+    loop: bool,
+    instrument: int | None,
+    database: Path,
+) -> None:
+    """Play a MIDI file or clip from the library.
+
+    SOURCE can be a MIDI file path or a clip ID from the library.
+
+    Examples:
+
+      midi-analyzer play song.mid
+
+      midi-analyzer play abc123_0 --tempo 140
+
+      midi-analyzer play clip_id --loop
+    """
+    from midi_analyzer.player import (
+        MidiPlayer,
+        PlaybackOptions,
+        get_instrument_for_role,
+        get_instrument_name,
+    )
+
+    verbose = ctx.obj.get("verbose", False)
+
+    # Determine if source is a file or clip ID
+    source_path = Path(source)
+    is_file = source_path.exists() and source_path.suffix.lower() in (".mid", ".midi")
+
+    if is_file:
+        # Play MIDI file directly
+        from midi_analyzer.ingest import parse_midi_file
+
+        click.echo(f"Loading {source_path.name}...")
+        song = parse_midi_file(source_path)
+
+        # Use song's tempo if not overridden
+        if tempo == 120.0 and song.primary_tempo != 120.0:
+            tempo = song.primary_tempo
+
+        click.echo(f"Playing: {len(song.tracks)} track(s), {song.total_bars} bars @ {tempo:.0f} BPM")
+        click.echo("Press Ctrl+C to stop.\n")
+
+        options = PlaybackOptions(
+            tempo_bpm=tempo,
+            transpose=transpose,
+            loop=loop,
+            instrument=instrument,
+        )
+
+        try:
+            with MidiPlayer() as player:
+                for i, track in enumerate(song.tracks):
+                    if not track.notes:
+                        continue
+
+                    from midi_analyzer.analysis.roles import classify_track_role
+                    role = classify_track_role(track)
+                    prog = instrument if instrument is not None else get_instrument_for_role(role)
+                    inst_name = get_instrument_name(prog) if role.value != "drums" else "Drums"
+
+                    click.echo(f"  Track {i + 1}: {track.name or 'Untitled'} [{role.value}] -> {inst_name}")
+                    player.play_track(track, options)
+
+        except KeyboardInterrupt:
+            click.echo("\nStopped.")
+    else:
+        # Try to play from library
+        from midi_analyzer.library import ClipLibrary
+
+        with ClipLibrary(database) as library:
+            cursor = library.connection.cursor()
+            cursor.execute("SELECT * FROM clips WHERE clip_id = ?", (source,))
+            row = cursor.fetchone()
+
+            if not row:
+                click.echo(f"'{source}' is not a valid file or clip ID.", err=True)
+                raise SystemExit(1)
+
+            clip = library._row_to_clip(row)
+            track = library.load_track(clip)
+
+            # Get instrument for role
+            prog = instrument if instrument is not None else get_instrument_for_role(clip.role)
+            inst_name = get_instrument_name(prog) if clip.role.value != "drums" else "Drums"
+
+            click.echo(f"Playing: {clip.track_name or clip.clip_id}")
+            click.echo(f"  Role: {clip.role.value} -> {inst_name}")
+            click.echo(f"  Notes: {clip.note_count}, Bars: {clip.duration_bars}")
+            click.echo(f"  Tempo: {tempo:.0f} BPM")
+            if verbose and clip.genres:
+                click.echo(f"  Genres: {', '.join(clip.genres)}")
+            click.echo("\nPress Ctrl+C to stop.\n")
+
+            options = PlaybackOptions(
+                tempo_bpm=tempo,
+                transpose=transpose,
+                loop=loop,
+                instrument=instrument,
+            )
+
+            try:
+                with MidiPlayer() as player:
+                    player.play_track(track, options)
+            except KeyboardInterrupt:
+                click.echo("\nStopped.")
+
+
+@cli.command("list-devices")
+def list_devices() -> None:
+    """List available MIDI output devices."""
+    from midi_analyzer.player import list_midi_devices
+
+    devices = list_midi_devices()
+
+    if not devices:
+        click.echo("No MIDI devices found.")
+        click.echo("Make sure pygame is installed: pip install pygame")
+        return
+
+    click.echo("MIDI Devices:\n")
+    for device_id, name, is_output in devices:
+        direction = "OUT" if is_output else "IN"
+        click.echo(f"  [{device_id}] {name} ({direction})")
+
+
 if __name__ == "__main__":
     cli()

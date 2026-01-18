@@ -41,6 +41,9 @@ dev = [
 music21 = [
     "music21>=9.1.0",
 ]
+player = [
+    "pygame>=2.5.0",
+]
 
 [project.scripts]
 midi-analyzer = "midi_analyzer.cli:cli"
