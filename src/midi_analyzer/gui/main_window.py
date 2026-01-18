@@ -304,14 +304,20 @@ class MainWindow(QMainWindow):
 
         files_processed = [0]
         total_files = [0]
+        cancelled = [False]
 
-        def progress_callback(current: int, total: int, filename: str) -> None:
+        def progress_callback(current: int, total: int, filename: str) -> bool:
+            """Update progress. Returns False to cancel the import."""
             files_processed[0] = current
             total_files[0] = total
             if total > 0:
                 progress.setValue(int(current * 100 / total))
                 progress.setLabelText(f"Importing: {filename}")
             QApplication.processEvents()
+            if progress.wasCanceled():
+                cancelled[0] = True
+                return False  # Signal to stop importing
+            return True  # Continue importing
 
         def error_callback(path: Path, error: Exception) -> None:
             # Log errors but continue
@@ -325,6 +331,11 @@ class MainWindow(QMainWindow):
                 error_callback=error_callback,
             )
             progress.close()
+
+            if cancelled[0]:
+                self.song_browser.refresh()
+                self.status_bar.showMessage(f"Import cancelled after {files_processed[0]} files")
+                return
 
             self.song_browser.refresh()
             self.status_bar.showMessage(f"Imported {count} clips from {files_processed[0]} files")

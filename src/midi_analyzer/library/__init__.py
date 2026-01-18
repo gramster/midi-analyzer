@@ -280,7 +280,7 @@ class ClipLibrary:
         genres: list[str] | None = None,
         artist: str = "",
         tags: list[str] | None = None,
-        progress_callback: Callable[[int, int, str], None] | None = None,
+        progress_callback: Callable[[int, int, str], bool | None] | None = None,
         error_callback: Callable[[Path, Exception], None] | None = None,
     ) -> int:
         """Index all MIDI files in a directory.
@@ -292,6 +292,7 @@ class ClipLibrary:
             artist: Default artist for all files.
             tags: Default tags for all files.
             progress_callback: Optional callback(current, total, filename).
+                Returns False to cancel, True or None to continue.
             error_callback: Optional callback(file_path, exception) for errors.
 
         Returns:
@@ -315,7 +316,9 @@ class ClipLibrary:
                 total_clips += len(clips)
 
                 if progress_callback:
-                    progress_callback(i + 1, len(files), file_path.name)
+                    result = progress_callback(i + 1, len(files), file_path.name)
+                    if result is False:  # Explicitly check for False to allow None
+                        break  # User cancelled
             except Exception as e:
                 # Report error if callback provided, otherwise skip silently
                 if error_callback:
