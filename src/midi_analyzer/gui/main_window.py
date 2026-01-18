@@ -514,6 +514,7 @@ class MainWindow(QMainWindow):
                 
                 self.song_detail.set_song(song, clip)
                 self.playback_controls.set_song(song)
+                self.pattern_view.show_song_analysis(song)
                 self.status_bar.showMessage(
                     f"Selected: {clip.artist} - {Path(clip.source_path).stem}"
                 )
