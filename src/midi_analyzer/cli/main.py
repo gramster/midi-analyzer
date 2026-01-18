@@ -195,6 +195,7 @@ def library() -> None:
     default=DEFAULT_LIBRARY,
     help="Library database path.",
 )
+@click.option("-v", "--verbose", is_flag=True, help="Show progress during indexing.")
 @click.pass_context
 def library_index(
     ctx: click.Context,
@@ -204,6 +205,7 @@ def library_index(
     artist: str,
     tag: tuple[str, ...],
     database: Path,
+    verbose: bool,
 ) -> None:
     """Index MIDI files into the clip library.
 
@@ -211,7 +213,7 @@ def library_index(
     """
     from midi_analyzer.library import ClipLibrary
 
-    verbose = ctx.obj.get("verbose", False)
+    verbose = verbose or ctx.obj.get("verbose", False)
 
     with ClipLibrary(database) as library:
         if path.is_file():
@@ -643,6 +645,7 @@ def export(
     default=DEFAULT_LIBRARY,
     help="Library database path (for clip playback).",
 )
+@click.option("-v", "--verbose", is_flag=True, help="Show detailed playback info.")
 @click.pass_context
 def play(
     ctx: click.Context,
@@ -652,6 +655,7 @@ def play(
     loop: bool,
     instrument: int | None,
     database: Path,
+    verbose: bool,
 ) -> None:
     """Play a MIDI file or clip from the library.
 
@@ -672,7 +676,7 @@ def play(
         get_instrument_name,
     )
 
-    verbose = ctx.obj.get("verbose", False)
+    verbose = verbose or ctx.obj.get("verbose", False)
 
     # Determine if source is a file or clip ID
     source_path = Path(source)
