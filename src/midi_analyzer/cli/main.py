@@ -91,7 +91,7 @@ def analyze(
     # Analyze files
     from midi_analyzer.ingest import parse_midi_file
     from midi_analyzer.harmony import detect_key, detect_chords
-    from midi_analyzer.analysis import classify_track_role, extract_features
+    from midi_analyzer.analysis import classify_track_role
 
     for file_path in files:
         try:
@@ -121,8 +121,8 @@ def analyze(
                     if not track.notes:
                         continue
 
-                    role = classify_track_role(track)
-                    features = extract_features(track)
+                    role_probs = classify_track_role(track)
+                    role = role_probs.primary_role
 
                     # Calculate pitch range
                     pitches = [n.pitch for n in track.notes]
