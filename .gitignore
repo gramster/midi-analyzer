@@ -57,6 +57,7 @@ env/
 venv/
 ENV/
 MIDI/
+MIDI2/
 env.bak/
 venv.bak/
 
