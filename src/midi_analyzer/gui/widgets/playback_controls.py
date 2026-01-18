@@ -113,7 +113,7 @@ class PlaybackControlsWidget(QWidget):
 
         # Update tempo from song
         if song.tempo_map:
-            tempo = int(song.tempo_map[0].bpm)
+            tempo = int(song.tempo_map[0].tempo_bpm)
             self.tempo_spinner.setValue(tempo)
 
         # Populate track selector

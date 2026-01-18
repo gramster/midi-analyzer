@@ -208,7 +208,7 @@ class SongDetailWidget(QWidget):
         self.path_label.setText(clip.source_path)
 
         # Stats
-        tempo = song.tempo_map[0].bpm if song.tempo_map else 120.0
+        tempo = song.tempo_map[0].tempo_bpm if song.tempo_map else 120.0
         self.tempo_label.setText(f"{tempo:.1f} BPM")
 
         if song.time_sig_map:

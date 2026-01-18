@@ -153,7 +153,7 @@ class ExportDialog(QDialog):
 
             # Set initial tempo
             if song.tempo_map:
-                self.tempo_spinner.setValue(int(song.tempo_map[0].bpm))
+                self.tempo_spinner.setValue(int(song.tempo_map[0].tempo_bpm))
 
             # Populate track list
             from midi_analyzer.analysis.features import FeatureExtractor
