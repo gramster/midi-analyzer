@@ -93,6 +93,9 @@ def analyze(
     from midi_analyzer.harmony import detect_key_for_song, detect_chord_progression_for_song
     from midi_analyzer.analysis import classify_track_role
 
+    success_count = 0
+    failed_files: list[tuple[Path, str]] = []
+
     for file_path in files:
         try:
             song = parse_midi_file(file_path)
@@ -159,13 +162,23 @@ def analyze(
                         )
                         click.echo(f"             Top hits: {top_str}")
 
+            success_count += 1
+
         except Exception as e:
+            failed_files.append((file_path, str(e)))
             if verbose:
-                click.echo(f"Error processing {file_path}: {e}", err=True)
+                click.echo(f"\nError processing {file_path}: {e}", err=True)
                 import traceback
                 click.echo(traceback.format_exc(), err=True)
-            else:
-                click.echo(f"Skipping {file_path.name}: {type(e).__name__}", err=True)
+
+    # Summary
+    click.echo(f"\n{'=' * 60}")
+    click.echo(f"Processed {success_count}/{len(files)} files successfully")
+
+    if failed_files:
+        click.echo(f"\nFailed to process {len(failed_files)} file(s):")
+        for path, error in failed_files:
+            click.echo(f"  - {path.name}: {error[:60]}{'...' if len(error) > 60 else ''}")
 
 
 # =============================================================================
