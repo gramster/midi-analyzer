@@ -64,9 +64,12 @@ class SongDetailWidget(QWidget):
         # Metadata group
         meta_group = QGroupBox("Metadata")
         meta_layout = QFormLayout(meta_group)
+        meta_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        meta_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
 
         self.name_label = QLabel("-")
         self.name_label.setWordWrap(True)
+        self.name_label.setMinimumWidth(200)
         meta_layout.addRow("Name:", self.name_label)
 
         self.artist_label = QLabel("-")
@@ -78,6 +81,7 @@ class SongDetailWidget(QWidget):
 
         self.path_label = QLabel("-")
         self.path_label.setWordWrap(True)
+        self.path_label.setMinimumWidth(200)
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         meta_layout.addRow("Path:", self.path_label)
 
@@ -86,6 +90,7 @@ class SongDetailWidget(QWidget):
         # Stats group
         stats_group = QGroupBox("Statistics")
         stats_layout = QFormLayout(stats_group)
+        stats_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
         self.tempo_label = QLabel("-")
         stats_layout.addRow("Tempo:", self.tempo_label)
