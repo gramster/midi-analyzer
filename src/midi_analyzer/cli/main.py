@@ -79,8 +79,9 @@ def analyze(
     # Analyze files
     from midi_analyzer.ingest import parse_midi_file
     from midi_analyzer.harmony import detect_key_for_song, detect_chord_progression_for_song
-    from midi_analyzer.analysis import classify_track_role
+    from midi_analyzer.analysis import classify_track_role, FeatureExtractor
 
+    feature_extractor = FeatureExtractor()
     success_count = 0
     failed_files: list[tuple[Path, str]] = []
 
@@ -112,6 +113,8 @@ def analyze(
                     if not track.notes:
                         continue
 
+                    # Extract features for role classification
+                    track.features = feature_extractor.extract_features(track, song.total_bars or 1)
                     role_probs = classify_track_role(track)
                     role = role_probs.primary_role()
 
