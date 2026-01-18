@@ -160,10 +160,12 @@ def analyze(
                         click.echo(f"             Top hits: {top_str}")
 
         except Exception as e:
-            click.echo(f"Error processing {file_path}: {e}", err=True)
             if verbose:
+                click.echo(f"Error processing {file_path}: {e}", err=True)
                 import traceback
                 click.echo(traceback.format_exc(), err=True)
+            else:
+                click.echo(f"Skipping {file_path.name}: {type(e).__name__}", err=True)
 
 
 # =============================================================================
