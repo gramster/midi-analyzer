@@ -182,6 +182,7 @@ class MetadataDialog(QDialog):
 
         # Use extracted title if available, otherwise fallback to filename
         name = metadata.title or Path(self._clip.source_path).stem
+        
         if metadata.artist and not self._clip.artist:
             # Also pre-fill artist if we found one and there isn't one already
             self.artist_input.setText(metadata.artist)

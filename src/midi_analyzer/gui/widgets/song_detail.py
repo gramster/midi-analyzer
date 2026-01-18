@@ -201,9 +201,22 @@ class SongDetailWidget(QWidget):
         song = self._song
         clip = self._clip
 
-        # Metadata
-        self.name_label.setText(Path(clip.source_path).stem)
-        self.artist_label.setText(clip.artist or "Unknown")
+        # Extract proper title from metadata
+        from midi_analyzer.ingest.metadata import MetadataExtractor
+
+        extractor = MetadataExtractor()
+        try:
+            import mido
+
+            midi_file = mido.MidiFile(clip.source_path)
+            metadata = extractor.extract(clip.source_path, midi_file)
+        except Exception:
+            metadata = extractor.extract(clip.source_path)
+
+        # Metadata - use extracted title or fallback to filename
+        name = metadata.title or Path(clip.source_path).stem
+        self.name_label.setText(name)
+        self.artist_label.setText(clip.artist or metadata.artist or "Unknown")
         self.genres_label.setText(", ".join(clip.genres) if clip.genres else "None")
         self.path_label.setText(clip.source_path)
 
