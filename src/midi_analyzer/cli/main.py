@@ -217,17 +217,27 @@ def library_index(
 
     with ClipLibrary(database) as library:
         if path.is_file():
-            clips = library.index_file(
-                path,
-                genres=list(genre) if genre else None,
-                artist=artist,
-                tags=list(tag) if tag else None,
-            )
-            click.echo(f"Indexed {len(clips)} clip(s) from {path.name}")
+            try:
+                clips = library.index_file(
+                    path,
+                    genres=list(genre) if genre else None,
+                    artist=artist,
+                    tags=list(tag) if tag else None,
+                )
+                click.echo(f"Indexed {len(clips)} clip(s) from {path.name}")
+            except Exception as e:
+                click.echo(f"Error indexing {path.name}: {e}", err=True)
+                raise SystemExit(1)
         else:
+            failed_files: list[tuple[Path, str]] = []
+
             def progress(current: int, total: int, filename: str) -> None:
+                click.echo(f"  [{current}/{total}] {filename}")
+
+            def on_error(file_path: Path, error: Exception) -> None:
+                failed_files.append((file_path, str(error)))
                 if verbose:
-                    click.echo(f"  [{current}/{total}] {filename}")
+                    click.echo(f"  Error: {file_path.name}: {error}", err=True)
 
             count = library.index_directory(
                 path,
@@ -236,8 +246,14 @@ def library_index(
                 artist=artist,
                 tags=list(tag) if tag else None,
                 progress_callback=progress if verbose else None,
+                error_callback=on_error,
             )
-            click.echo(f"Indexed {count} clip(s) from {path}")
+            click.echo(f"\nIndexed {count} clip(s) from {path}")
+
+            if failed_files:
+                click.echo(f"\nFailed to index {len(failed_files)} file(s):")
+                for fpath, error in failed_files:
+                    click.echo(f"  - {fpath.name}: {error[:50]}{'...' if len(error) > 50 else ''}")
 
 
 @library.command("query")

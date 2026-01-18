@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from midi_analyzer.analysis.features import FeatureExtractor
 from midi_analyzer.analysis.roles import classify_track_role
 from midi_analyzer.ingest import parse_midi_file
 from midi_analyzer.metadata.genres import GenreNormalizer, GenreResult, normalize_tag
@@ -218,13 +219,16 @@ class ClipLibrary:
 
         clips = []
         cursor = self.connection.cursor()
+        feature_extractor = FeatureExtractor()
 
         for track in song.tracks:
             if not track.notes:
                 continue
 
-            # Classify role
-            role = classify_track_role(track)
+            # Extract features and classify role
+            track.features = feature_extractor.extract_features(track, song.total_bars or 1)
+            role_probs = classify_track_role(track)
+            role = role_probs.primary_role()
 
             # Generate clip ID
             clip_id = f"{song.song_id}_{track.track_id}"
@@ -282,6 +286,7 @@ class ClipLibrary:
         artist: str = "",
         tags: list[str] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        error_callback: Callable[[Path, Exception], None] | None = None,
     ) -> int:
         """Index all MIDI files in a directory.
 
@@ -292,6 +297,7 @@ class ClipLibrary:
             artist: Default artist for all files.
             tags: Default tags for all files.
             progress_callback: Optional callback(current, total, filename).
+            error_callback: Optional callback(file_path, exception) for errors.
 
         Returns:
             Number of clips indexed.
@@ -315,8 +321,10 @@ class ClipLibrary:
 
                 if progress_callback:
                     progress_callback(i + 1, len(files), file_path.name)
-            except Exception:
-                # Skip files that can't be parsed
+            except Exception as e:
+                # Report error if callback provided, otherwise skip silently
+                if error_callback:
+                    error_callback(file_path, e)
                 continue
 
         return total_clips
