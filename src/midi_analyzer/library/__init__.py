@@ -162,19 +162,6 @@ class ClipLibrary:
             CREATE INDEX IF NOT EXISTS idx_clips_song ON clips(song_id)
         """)
 
-        # Full-text search for genres and tags
-        cursor.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
-                clip_id,
-                genres,
-                tags,
-                artist,
-                track_name,
-                content='clips',
-                content_rowid='rowid'
-            )
-        """)
-
         self.connection.commit()
 
     def close(self) -> None:
@@ -327,9 +314,6 @@ class ClipLibrary:
                 if error_callback:
                     error_callback(file_path, e)
                 continue
-
-        # Rebuild FTS index once at the end
-        self._rebuild_fts()
 
         return total_clips
 
@@ -589,7 +573,6 @@ class ClipLibrary:
             params,
         )
         self.connection.commit()
-        self._rebuild_fts()
 
         return cursor.rowcount > 0
 
@@ -609,16 +592,6 @@ class ClipLibrary:
             artist=row["artist"] or "",
             tags=json.loads(row["tags"]) if row["tags"] else [],
         )
-
-    def _rebuild_fts(self) -> None:
-        """Rebuild the full-text search index."""
-        cursor = self.connection.cursor()
-        cursor.execute("DELETE FROM clips_fts")
-        cursor.execute("""
-            INSERT INTO clips_fts(clip_id, genres, tags, artist, track_name)
-            SELECT clip_id, genres, tags, artist, track_name FROM clips
-        """)
-        self.connection.commit()
 
     def iter_clips(self, batch_size: int = 100) -> Iterator[ClipInfo]:
         """Iterate over all clips in the library.
