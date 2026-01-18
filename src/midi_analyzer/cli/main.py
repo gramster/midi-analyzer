@@ -88,15 +88,79 @@ def analyze(
     # Analyze files
     from midi_analyzer.ingest import parse_midi_file
     from midi_analyzer.harmony import detect_key, detect_chords
+    from midi_analyzer.analysis import classify_track_role, extract_features
 
     for file_path in files:
         try:
             song = parse_midi_file(file_path)
             key = detect_key(song)
-            click.echo(f"{file_path.name}: {key.key.name} {key.mode.value} ({len(song.tracks)} tracks)")
-        except Exception as e:
+
+            # Basic summary line
+            click.echo(f"\n{file_path.name}: {key.key.name} {key.mode.value} ({len(song.tracks)} tracks)")
+
             if verbose:
-                click.echo(f"Error processing {file_path}: {e}", err=True)
+                # Show timing info
+                click.echo(f"  Tempo: {song.primary_tempo:.1f} BPM, Time sig: {song.primary_time_signature}")
+                click.echo(f"  Duration: {song.duration_beats:.1f} beats")
+
+                # Detect chord progression
+                chords = detect_chords(song)
+                if chords.events:
+                    chord_symbols = [c.chord.symbol for c in chords.events[:8]]
+                    progression = " → ".join(chord_symbols)
+                    if len(chords.events) > 8:
+                        progression += " ..."
+                    click.echo(f"  Chords: {progression}")
+
+                # Show each track with role and stats
+                click.echo(f"  Tracks:")
+                for i, track in enumerate(song.tracks):
+                    if not track.notes:
+                        continue
+
+                    role = classify_track_role(track)
+                    features = extract_features(track)
+
+                    # Calculate pitch range
+                    pitches = [n.pitch for n in track.notes]
+                    pitch_range = f"{min(pitches)}-{max(pitches)}"
+
+                    # Note density
+                    if song.duration_beats > 0:
+                        notes_per_beat = len(track.notes) / song.duration_beats
+                    else:
+                        notes_per_beat = 0
+
+                    track_name = track.name or f"Track {i}"
+                    click.echo(
+                        f"    [{role.value:6}] {track_name}: "
+                        f"{len(track.notes)} notes, "
+                        f"pitch {pitch_range}, "
+                        f"{notes_per_beat:.1f} notes/beat"
+                    )
+
+                    # Show note distribution for drums
+                    if role == TrackRole.DRUMS and verbose:
+                        # Count notes by pitch (drum sounds)
+                        from collections import Counter
+                        drum_counts = Counter(n.pitch for n in track.notes)
+                        top_drums = drum_counts.most_common(3)
+                        drum_names = {
+                            36: "kick", 38: "snare", 42: "hihat-c",
+                            46: "hihat-o", 41: "tom-lo", 45: "tom-mid",
+                            48: "tom-hi", 49: "crash", 51: "ride",
+                        }
+                        top_str = ", ".join(
+                            f"{drum_names.get(p, f'n{p}')}:{c}"
+                            for p, c in top_drums
+                        )
+                        click.echo(f"             Top hits: {top_str}")
+
+        except Exception as e:
+            click.echo(f"Error processing {file_path}: {e}", err=True)
+            if verbose:
+                import traceback
+                click.echo(traceback.format_exc(), err=True)
 
 
 # =============================================================================

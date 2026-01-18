@@ -56,6 +56,7 @@ coverage.xml
 env/
 venv/
 ENV/
+MIDI/
 env.bak/
 venv.bak/
 
