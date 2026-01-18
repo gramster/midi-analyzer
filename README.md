@@ -7,6 +7,8 @@ Analyze MIDI files to extract reusable musical patterns for generative music sys
 - **MIDI Ingest & Normalization** — Parse MIDI files with tempo/time-sig mapping
 - **Track Role Inference** — Automatically classify tracks (drums, bass, chords, lead, arp, pad)
 - **Pattern Extraction** — Extract rhythmic and melodic patterns with fingerprinting
+- **Arpeggio Inference** — Detect arpeggio patterns with rate, intervals, octave jumps, and gate
+- **Section Segmentation** — Detect song structure (intro, verse, chorus, etc.) using novelty analysis
 - **Harmony Analysis** — Key detection (Krumhansl-Schmuckler) and chord progression inference
 - **Genre Tagging** — Retrieve genre/tags via MusicBrainz, with canonical taxonomy normalization
 - **Clip Library** — Index and query tracks by genre, artist, and instrument role
@@ -117,14 +119,86 @@ print(f"Primary genre: {result.primary.canonical}")  # "hip-hop"
 print(f"Confidence: {result.overall_confidence}")
 ```
 
+### Analyze Song Structure
+
+```python
+from midi_analyzer.ingest import parse_midi_file
+from midi_analyzer.analysis.sections import analyze_sections, SectionType
+
+# Parse and analyze structure
+song = parse_midi_file("song.mid")
+analysis = analyze_sections(song)
+
+# Show form sequence (A, B, A, C, etc.)
+print(f"Form: {' → '.join(analysis.form_sequence)}")
+
+# Iterate through sections
+for section in analysis.sections:
+    print(f"Section {section.form_label}: bars {section.start_bar}-{section.end_bar}")
+    if section.type_hint != SectionType.UNKNOWN:
+        print(f"  Type: {section.type_hint.value} ({section.type_confidence:.0%})")
+```
+
+### Extract Arpeggio Patterns
+
+```python
+from midi_analyzer.ingest import parse_midi_file
+from midi_analyzer.analysis import classify_track_role
+from midi_analyzer.analysis.arpeggios import analyze_arp_track
+
+song = parse_midi_file("song.mid")
+
+for track in song.tracks:
+    role = classify_track_role(track)
+    if role.arp > 0.5:  # Track likely an arpeggio
+        analysis = analyze_arp_track(track, song)
+        print(f"Track: {track.name}")
+        print(f"  Rate: {analysis.dominant_rate}")
+        print(f"  Gate: {analysis.avg_gate:.2f}")
+        for pattern in analysis.patterns[:3]:
+            print(f"  Pattern: intervals={pattern.interval_sequence[:4]}, "
+                  f"octaves={pattern.octave_jumps[:4]}")
+```
+
 ## CLI Usage
 
 ```bash
 # Analyze a single MIDI file
 midi-analyzer analyze song.mid
 
+# Analyze with verbose output
+midi-analyzer analyze song.mid -v
+
+# Analyze with section structure detection
+midi-analyzer analyze song.mid --sections
+
+# Analyze with arpeggio pattern extraction
+midi-analyzer analyze song.mid --arpeggios
+
 # Analyze a directory of MIDI files  
 midi-analyzer analyze ./midi-corpus/ --recursive
+
+# --- Song Structure Analysis ---
+
+# Detect song sections (intro, verse, chorus, etc.)
+midi-analyzer structure song.mid
+
+# Output as JSON for programmatic use
+midi-analyzer structure song.mid --format json
+
+# Verbose mode shows per-bar feature details
+midi-analyzer structure song.mid -v
+
+# --- Arpeggio Pattern Extraction ---
+
+# Extract arpeggios from tracks
+midi-analyzer arpeggios song.mid
+
+# Analyze a specific track
+midi-analyzer arpeggios song.mid --track 2
+
+# Output as JSON
+midi-analyzer arpeggios song.mid --format json
 
 # --- Clip Library Commands ---
 
@@ -139,6 +213,9 @@ midi-analyzer library query --artist "Miles Davis"
 
 # Export a clip to MIDI
 midi-analyzer library export abc123_0 -o bass_clip.mid --tempo 120
+
+# Enrich library with MusicBrainz genre tags
+midi-analyzer library enrich
 
 # View library statistics
 midi-analyzer library stats
@@ -183,6 +260,8 @@ midi-analyzer list-devices
 |--------|---------|
 | `midi_analyzer.ingest` | Parse MIDI files, extract metadata |
 | `midi_analyzer.analysis` | Track role classification, feature extraction |
+| `midi_analyzer.analysis.arpeggios` | Arpeggio pattern detection and extraction |
+| `midi_analyzer.analysis.sections` | Song structure segmentation |
 | `midi_analyzer.harmony` | Key detection, chord progression inference |
 | `midi_analyzer.metadata` | MusicBrainz integration, genre normalization |
 | `midi_analyzer.library` | Clip indexing and querying |
@@ -199,6 +278,14 @@ from midi_analyzer.ingest import parse_midi_file, MidiParser
 
 # Analysis  
 from midi_analyzer.analysis import classify_track_role, extract_features
+
+# Arpeggio Analysis
+from midi_analyzer.analysis.arpeggios import ArpAnalyzer, analyze_arp_track, extract_arp_patterns
+
+# Section Analysis
+from midi_analyzer.analysis.sections import SectionAnalyzer, analyze_sections, SectionType
+
+# Harmony
 from midi_analyzer.harmony import detect_key, detect_chords
 
 # Library

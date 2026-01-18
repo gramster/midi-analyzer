@@ -11,6 +11,26 @@ from midi_analyzer import __version__
 from midi_analyzer.models.core import TrackRole
 
 
+# ANSI color codes for terminal output
+class Colors:
+    """ANSI color codes for styled terminal output."""
+
+    HEADER = "\033[95m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    END = "\033[0m"
+
+
+def color(text: str, *codes: str) -> str:
+    """Apply color codes to text."""
+    return "".join(codes) + str(text) + Colors.END
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="midi-analyzer")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
@@ -41,16 +61,23 @@ DEFAULT_LIBRARY = Path("midi_library.db")
     help="Recursively process directories.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed analysis output.")
+@click.option("--sections", is_flag=True, help="Include section structure analysis.")
+@click.option("--arpeggios", is_flag=True, help="Include arpeggio pattern analysis.")
 @click.pass_context
 def analyze(
     ctx: click.Context,
     path: Path,
     recursive: bool,
     verbose: bool,
+    sections: bool,
+    arpeggios: bool,
 ) -> None:
     """Analyze MIDI files and display results.
 
     PATH can be a single MIDI file or a directory containing MIDI files.
+    
+    Use --sections to detect song structure (intro, verse, chorus, etc.).
+    Use --arpeggios to extract arpeggio patterns from tracks.
     
     To index files into a searchable database, use 'library index' instead.
     """
@@ -81,6 +108,8 @@ def analyze(
     from midi_analyzer.ingest import parse_midi_file
     from midi_analyzer.harmony import detect_key_for_song, detect_chord_progression_for_song
     from midi_analyzer.analysis import classify_track_role, FeatureExtractor
+    from midi_analyzer.analysis.sections import analyze_sections, SectionType
+    from midi_analyzer.analysis.arpeggios import analyze_arp_track
 
     feature_extractor = FeatureExtractor()
     success_count = 0
@@ -92,7 +121,7 @@ def analyze(
             key = detect_key_for_song(song)
 
             # Basic summary line
-            click.echo(f"\n{file_path.name}: {key.root_name} {key.mode.value} ({len(song.tracks)} tracks)")
+            click.echo(f"\n{color(file_path.name, Colors.BOLD, Colors.CYAN)}: {key.root_name} {key.mode.value} ({len(song.tracks)} tracks)")
 
             if verbose:
                 # Show timing info
@@ -154,6 +183,43 @@ def analyze(
                         )
                         click.echo(f"             Top hits: {top_str}")
 
+                    # Show arpeggio analysis for arp tracks
+                    if arpeggios and role == TrackRole.ARP:
+                        track.role_probs = role_probs
+                        arp_analysis = analyze_arp_track(track, song)
+                        if arp_analysis.patterns:
+                            click.echo(f"             {color('Arpeggio patterns:', Colors.GREEN)}")
+                            for j, pattern in enumerate(arp_analysis.patterns[:3]):
+                                intervals = pattern.interval_sequence[:4]
+                                interval_str = " ".join(str(i) for i in intervals)
+                                click.echo(
+                                    f"               [{j+1}] Rate: {pattern.rate}, "
+                                    f"Intervals: [{interval_str}], "
+                                    f"Gate: {pattern.gate:.2f}"
+                                )
+
+            # Section analysis
+            if sections:
+                section_analysis = analyze_sections(song)
+                if section_analysis.sections:
+                    click.echo(f"\n  {color('Song Structure:', Colors.BOLD)}")
+
+                    # Show form sequence
+                    form_seq = " → ".join(section_analysis.form_sequence)
+                    click.echo(f"    Form: {form_seq}")
+
+                    # Show each section
+                    for section in section_analysis.sections:
+                        type_str = ""
+                        if section.type_hint != SectionType.UNKNOWN:
+                            confidence_pct = int(section.type_confidence * 100)
+                            type_str = f" ({section.type_hint.value} ~{confidence_pct}%)"
+
+                        bars_str = f"bars {section.start_bar + 1}-{section.end_bar}"
+                        click.echo(
+                            f"    {color(section.form_label, Colors.CYAN)}: {bars_str}{type_str}"
+                        )
+
             success_count += 1
 
         except Exception as e:
@@ -171,6 +237,273 @@ def analyze(
         click.echo(f"\nFailed to process {len(failed_files)} file(s):")
         for path, error in failed_files:
             click.echo(f"  - {path.name}: {error[:60]}{'...' if len(error) > 60 else ''}")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("-v", "--verbose", is_flag=True, help="Show per-bar feature details.")
+@click.option("-f", "--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@click.pass_context
+def structure(ctx: click.Context, path: Path, verbose: bool, output_format: str) -> None:
+    """Analyze song structure and detect sections.
+
+    Detects section boundaries using novelty analysis, clusters similar
+    sections into form labels (A/B/C), and provides heuristic type hints
+    (intro, verse, chorus, breakdown, etc.).
+
+    Example:
+        midi-analyzer structure song.mid
+        midi-analyzer structure song.mid --format json
+    """
+    from midi_analyzer.ingest import parse_midi_file
+    from midi_analyzer.harmony import detect_key_for_song
+    from midi_analyzer.analysis.sections import analyze_sections, SectionType
+
+    verbose = verbose or ctx.obj.get("verbose", False)
+
+    if not path.is_file():
+        click.echo(f"Error: {path} is not a file", err=True)
+        raise SystemExit(1)
+
+    try:
+        song = parse_midi_file(path)
+        key = detect_key_for_song(song)
+        analysis = analyze_sections(song)
+    except Exception as e:
+        click.echo(f"Error analyzing {path}: {e}", err=True)
+        raise SystemExit(1)
+
+    if output_format == "json":
+        # JSON output for programmatic use
+        data = {
+            "file": str(path),
+            "key": f"{key.root_name} {key.mode.value}",
+            "tempo": song.primary_tempo,
+            "time_signature": song.primary_time_sig,
+            "total_bars": song.total_bars,
+            "form_sequence": analysis.form_sequence,
+            "sections": [
+                {
+                    "form_label": s.form_label,
+                    "start_bar": s.start_bar,
+                    "end_bar": s.end_bar,
+                    "start_beat": s.start_beat,
+                    "end_beat": s.end_beat,
+                    "type_hint": s.type_hint.value,
+                    "type_confidence": s.type_confidence,
+                }
+                for s in analysis.sections
+            ],
+        }
+        if verbose:
+            data["bar_features"] = [
+                {
+                    "bar": bf.bar_number,
+                    "active_tracks": bf.active_track_count,
+                    "note_count": bf.total_note_count,
+                    "velocity": bf.avg_velocity,
+                    "density_by_role": bf.density_by_role,
+                }
+                for bf in analysis.bar_features
+            ]
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    # Text output
+    click.echo(f"\n{color('Song Structure Analysis', Colors.BOLD, Colors.HEADER)}")
+    click.echo(f"{'=' * 50}")
+    click.echo(f"File: {path.name}")
+    click.echo(f"Key: {key.root_name} {key.mode.value}")
+    click.echo(f"Tempo: {song.primary_tempo:.1f} BPM")
+    click.echo(f"Time Sig: {song.primary_time_sig}")
+    click.echo(f"Duration: {song.total_bars} bars ({song.total_beats:.1f} beats)")
+
+    if not analysis.sections:
+        click.echo("\nNo clear section structure detected.")
+        return
+
+    # Form overview
+    click.echo(f"\n{color('Form:', Colors.BOLD)} {' → '.join(analysis.form_sequence)}")
+
+    # Section details
+    click.echo(f"\n{color('Sections:', Colors.BOLD)}")
+    for i, section in enumerate(analysis.sections, 1):
+        duration = section.end_bar - section.start_bar
+        type_info = ""
+        if section.type_hint != SectionType.UNKNOWN:
+            type_info = f" • {color(section.type_hint.value, Colors.YELLOW)} ({int(section.type_confidence * 100)}%)"
+
+        click.echo(
+            f"  {color(section.form_label, Colors.CYAN, Colors.BOLD)}: "
+            f"Bars {section.start_bar + 1}–{section.end_bar} "
+            f"({duration} bars){type_info}"
+        )
+
+    # Per-bar details if verbose
+    if verbose and analysis.bar_features:
+        click.echo(f"\n{color('Per-Bar Features:', Colors.BOLD)}")
+        click.echo("  Bar | Tracks | Notes | Velocity | Top Role")
+        click.echo("  " + "-" * 48)
+
+        for bf in analysis.bar_features:
+            # Find dominant role
+            if bf.density_by_role:
+                top_role = max(bf.density_by_role.items(), key=lambda x: x[1])
+                role_str = f"{top_role[0]} ({top_role[1]:.1f})"
+            else:
+                role_str = "-"
+
+            click.echo(
+                f"  {bf.bar_number + 1:3d} | {bf.active_track_count:6d} | "
+                f"{bf.total_note_count:5d} | {bf.avg_velocity:8.1f} | {role_str}"
+            )
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--track", "-t", type=int, help="Specific track index to analyze (0-based).")
+@click.option("-f", "--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@click.option("-v", "--verbose", is_flag=True, help="Show all detected patterns.")
+@click.pass_context
+def arpeggios(ctx: click.Context, path: Path, track: int | None, output_format: str, verbose: bool) -> None:
+    """Extract arpeggio patterns from a MIDI file.
+
+    Analyzes tracks with arp-like characteristics (high note density,
+    repetitive patterns, monophonic) and extracts:
+    - Note rate (1/16, 1/8, etc.)
+    - Interval sequence relative to chord root
+    - Octave jumps
+    - Gate/sustain ratio
+
+    Examples:
+        midi-analyzer arpeggios song.mid
+        midi-analyzer arpeggios song.mid --track 2
+        midi-analyzer arpeggios song.mid --format json
+    """
+    from midi_analyzer.ingest import parse_midi_file
+    from midi_analyzer.analysis import classify_track_role, FeatureExtractor
+    from midi_analyzer.analysis.arpeggios import analyze_arp_track
+
+    verbose = verbose or ctx.obj.get("verbose", False)
+
+    if not path.is_file():
+        click.echo(f"Error: {path} is not a file", err=True)
+        raise SystemExit(1)
+
+    try:
+        song = parse_midi_file(path)
+    except Exception as e:
+        click.echo(f"Error loading {path}: {e}", err=True)
+        raise SystemExit(1)
+
+    feature_extractor = FeatureExtractor()
+
+    # Analyze tracks and find arp candidates
+    arp_tracks = []
+    for i, t in enumerate(song.tracks):
+        if not t.notes:
+            continue
+
+        t.features = feature_extractor.extract_features(t, song.total_bars or 1)
+        role_probs = classify_track_role(t)
+        t.role_probs = role_probs
+
+        # If specific track requested, use it; otherwise filter by arp probability
+        if track is not None:
+            if i == track:
+                arp_tracks.append((i, t, role_probs))
+        elif role_probs.arp > 0.3:  # Threshold for arp-like tracks
+            arp_tracks.append((i, t, role_probs))
+
+    if not arp_tracks:
+        if track is not None:
+            click.echo(f"Track {track} not found or has no notes.", err=True)
+        else:
+            click.echo("No arpeggio-like tracks detected.")
+            click.echo("Use --track N to analyze a specific track.")
+        raise SystemExit(1)
+
+    results = []
+    for track_idx, t, role_probs in arp_tracks:
+        analysis = analyze_arp_track(t, song)
+        results.append({
+            "track_index": track_idx,
+            "track_name": t.name or f"Track {track_idx}",
+            "arp_probability": role_probs.arp,
+            "analysis": analysis,
+        })
+
+    if output_format == "json":
+        data = {
+            "file": str(path),
+            "tracks": [
+                {
+                    "track_index": r["track_index"],
+                    "track_name": r["track_name"],
+                    "arp_probability": r["arp_probability"],
+                    "dominant_rate": r["analysis"].dominant_rate,
+                    "avg_gate": r["analysis"].avg_gate,
+                    "patterns": [
+                        {
+                            "rate": p.rate,
+                            "interval_sequence": p.interval_sequence,
+                            "octave_jumps": p.octave_jumps,
+                            "gate": p.gate,
+                        }
+                        for p in r["analysis"].patterns
+                    ],
+                    "windows": [
+                        {
+                            "start_beat": w.start_beat,
+                            "end_beat": w.end_beat,
+                            "chord": w.inferred_chord.name if w.inferred_chord else None,
+                            "rate": w.rate,
+                            "interval_sequence": w.interval_sequence[:8],
+                        }
+                        for w in r["analysis"].windows
+                    ] if verbose else [],
+                }
+                for r in results
+            ],
+        }
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    # Text output
+    click.echo(f"\n{color('Arpeggio Analysis', Colors.BOLD, Colors.HEADER)}")
+    click.echo(f"{'=' * 50}")
+    click.echo(f"File: {path.name}")
+
+    for r in results:
+        analysis = r["analysis"]
+        click.echo(f"\n{color(r['track_name'], Colors.CYAN, Colors.BOLD)}")
+        click.echo(f"  Arp probability: {r['arp_probability']:.0%}")
+        click.echo(f"  Dominant rate: {color(analysis.dominant_rate, Colors.GREEN)}")
+        click.echo(f"  Average gate: {analysis.avg_gate:.2f}")
+
+        if analysis.patterns:
+            click.echo(f"\n  {color('Detected Patterns:', Colors.BOLD)}")
+            for i, pattern in enumerate(analysis.patterns[:5] if not verbose else analysis.patterns):
+                intervals = " ".join(f"{iv:2d}" for iv in pattern.interval_sequence[:8])
+                octaves = " ".join(str(o) for o in pattern.octave_jumps[:8]) if pattern.octave_jumps else "-"
+                click.echo(
+                    f"    [{i+1}] Rate: {pattern.rate:5s} | "
+                    f"Intervals: [{intervals}] | "
+                    f"Octaves: [{octaves}] | "
+                    f"Gate: {pattern.gate:.2f}"
+                )
+
+            if not verbose and len(analysis.patterns) > 5:
+                click.echo(f"    ... and {len(analysis.patterns) - 5} more (use -v to see all)")
+
+        if verbose and analysis.windows:
+            click.echo(f"\n  {color('Analysis Windows:', Colors.BOLD)}")
+            for w in analysis.windows:
+                chord_name = w.inferred_chord.name if w.inferred_chord else "?"
+                click.echo(
+                    f"    Bars {w.start_beat/4:.0f}–{w.end_beat/4:.0f}: "
+                    f"Chord={chord_name}, Rate={w.rate}"
+                )
 
 
 # =============================================================================
