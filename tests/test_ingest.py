@@ -160,6 +160,98 @@ class TestTimingResolver:
         assert resolver.beat_to_bar_beat(6.0, time_sig_map) == (2, 0.0)
 
 
+class TestSwingDetection:
+    """Tests for swing detection."""
+
+    def test_straight_timing(self) -> None:
+        """Test detection of straight (non-swung) timing."""
+        from midi_analyzer.ingest.timing import SwingStyle, detect_swing
+        from midi_analyzer.models.core import NoteEvent
+
+        # Create notes with straight 8th note timing
+        notes = []
+        for i in range(16):
+            notes.append(
+                NoteEvent(
+                    pitch=60,
+                    velocity=100,
+                    start_tick=i * 240,  # 240 ticks = 8th note at 480 ppq
+                    channel=0,
+                    track_id=0,
+                    start_beat=i * 0.5,
+                    duration_beats=0.4,
+                )
+            )
+
+        result = detect_swing(notes)
+        assert result.style == SwingStyle.STRAIGHT
+        assert result.sample_count > 0
+
+    def test_heavy_swing(self) -> None:
+        """Test detection of triplet swing."""
+        from midi_analyzer.ingest.timing import SwingStyle, detect_swing
+        from midi_analyzer.models.core import NoteEvent
+
+        # Create notes with triplet swing (~67% ratio)
+        # In swing, the downbeat 8th is longer, upbeat 8th is shorter
+        # Downbeat at 0.0, upbeat at 0.67 (instead of straight 0.5)
+        # Then next downbeat at 1.0, upbeat at 1.67, etc.
+        notes = []
+        for i in range(8):
+            beat = float(i)
+            # Downbeat note (on the beat)
+            notes.append(
+                NoteEvent(
+                    pitch=60,
+                    velocity=100,
+                    start_tick=0,
+                    channel=0,
+                    track_id=0,
+                    start_beat=beat,
+                    duration_beats=0.6,
+                )
+            )
+            # Swung upbeat (at beat + 0.67 instead of beat + 0.5)
+            notes.append(
+                NoteEvent(
+                    pitch=60,
+                    velocity=100,
+                    start_tick=0,
+                    channel=0,
+                    track_id=0,
+                    start_beat=beat + 0.67,
+                    duration_beats=0.25,
+                )
+            )
+
+        result = detect_swing(notes)
+        # Should detect swing (ratio around 0.67)
+        assert result.ratio > 0.55  # Clearly not straight
+        assert result.style in (SwingStyle.MEDIUM, SwingStyle.HEAVY)
+
+    def test_insufficient_notes(self) -> None:
+        """Test handling of too few notes."""
+        from midi_analyzer.ingest.timing import SwingStyle, detect_swing
+        from midi_analyzer.models.core import NoteEvent
+
+        notes = [
+            NoteEvent(
+                pitch=60,
+                velocity=100,
+                start_tick=0,
+                channel=0,
+                track_id=0,
+                start_beat=0.0,
+                duration_beats=0.4,
+            )
+        ]
+
+        result = detect_swing(notes)
+        assert result.style == SwingStyle.STRAIGHT
+        assert result.confidence == 0.0
+        assert result.sample_count == 0
+
+
 class TestMetadataExtractor:
     """Tests for metadata extraction."""
 

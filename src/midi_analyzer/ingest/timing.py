@@ -3,8 +3,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from midi_analyzer.models.core import NoteEvent, Song, TempoEvent, TimeSignature
+
+
+class SwingStyle(Enum):
+    """Detected swing style."""
+
+    STRAIGHT = "straight"
+    LIGHT = "light"  # ~55% ratio
+    MEDIUM = "medium"  # ~60% ratio
+    HEAVY = "heavy"  # ~67% triplet swing
+
+
+@dataclass
+class SwingAnalysis:
+    """Results of swing detection analysis."""
+
+    style: SwingStyle
+    ratio: float  # Ratio of long-to-short 8th notes (0.5 = straight, 0.67 = triplet)
+    confidence: float  # 0-1 confidence in the detection
+    sample_count: int  # Number of pairs analyzed
 
 
 @dataclass
@@ -232,5 +252,142 @@ def quantize_song(song: Song, grid: int = 16) -> Song:
             note.quantized_duration = resolver.quantize_duration(
                 note.duration_beats, grid=grid, beats_per_bar=beats_per_bar
             )
+
+    return song
+
+
+def detect_swing(notes: list[NoteEvent], beats_per_bar: float = 4.0) -> SwingAnalysis:
+    """Detect swing feel from a list of notes.
+
+    Analyzes the timing of consecutive 8th note pairs to detect swing.
+    Swing is measured by the ratio of the first 8th note's duration to
+    the total duration of the pair.
+
+    Args:
+        notes: List of note events (should be sorted by start time).
+        beats_per_bar: Beats per bar for grid calculation.
+
+    Returns:
+        SwingAnalysis with detected swing style, ratio, and confidence.
+    """
+    if len(notes) < 4:
+        return SwingAnalysis(
+            style=SwingStyle.STRAIGHT,
+            ratio=0.5,
+            confidence=0.0,
+            sample_count=0,
+        )
+
+    # 8th note duration in beats (in 4/4, an 8th = 0.5 beats)
+    eighth_note = beats_per_bar / 8.0
+    tolerance = eighth_note * 0.3  # 30% tolerance
+
+    ratios: list[float] = []
+
+    # Look at consecutive note pairs that fall on 8th note boundaries
+    sorted_notes = sorted(notes, key=lambda n: n.start_beat)
+
+    for i in range(len(sorted_notes) - 1):
+        note1 = sorted_notes[i]
+        note2 = sorted_notes[i + 1]
+
+        # Check if note1 is on a downbeat (beat position 0.0, 1.0, 2.0, etc)
+        # or on an even 8th note position (0.0, 0.5, 1.0, 1.5, etc in straight time)
+        beat_pos = note1.start_beat % 1.0
+
+        # Is it on a downbeat?
+        is_on_downbeat = beat_pos < tolerance or beat_pos > (1.0 - tolerance)
+
+        if not is_on_downbeat:
+            continue
+
+        # Check the gap between notes - should be around half a beat (8th note)
+        gap = note2.start_beat - note1.start_beat
+
+        # In straight time, gap would be 0.5 beats
+        # In swing time, the first 8th is longer, so gap might be 0.55-0.67
+        # We're looking for gaps that could be swing 8ths
+        if gap < 0.3 or gap > 0.8:
+            # Not an 8th note pair
+            continue
+
+        # The ratio is: how far into the half-beat does the 2nd note land?
+        # Straight time: gap/0.5 = 1.0 (second note exactly at upbeat)
+        # Light swing: ratio > 1.0 (second note later than upbeat)
+        # We normalize to express as "percentage of first 8th in the pair"
+        # For straight: first = 0.5, second = 0.5, ratio = 0.5
+        # For triplet swing: first = 0.67 * (total), second = 0.33 * (total)
+        # So ratio = first / (first + second) = gap / half_beat
+
+        # But it's easier to think of it as where in the beat the upbeat falls
+        # If downbeat is at 0.0, upbeat at 0.5 = straight
+        # If downbeat is at 0.0, upbeat at 0.67 = triplet swing
+        ratio = gap  # Direct gap measurement works for 4/4
+
+        ratios.append(ratio)
+
+    if len(ratios) < 3:
+        return SwingAnalysis(
+            style=SwingStyle.STRAIGHT,
+            ratio=0.5,
+            confidence=0.0,
+            sample_count=len(ratios),
+        )
+
+    # Calculate average ratio and variance
+    avg_ratio = sum(ratios) / len(ratios)
+    variance = sum((r - avg_ratio) ** 2 for r in ratios) / len(ratios)
+    std_dev = variance**0.5
+
+    # Confidence based on consistency (low std dev = high confidence)
+    confidence = max(0.0, min(1.0, 1.0 - (std_dev * 5)))
+
+    # Classify swing style
+    if avg_ratio < 0.52:
+        style = SwingStyle.STRAIGHT
+    elif avg_ratio < 0.58:
+        style = SwingStyle.LIGHT
+    elif avg_ratio < 0.64:
+        style = SwingStyle.MEDIUM
+    else:
+        style = SwingStyle.HEAVY
+
+    return SwingAnalysis(
+        style=style,
+        ratio=avg_ratio,
+        confidence=confidence,
+        sample_count=len(ratios),
+    )
+
+
+def detect_song_swing(song: Song) -> SwingAnalysis:
+    """Detect swing for an entire song by analyzing all tracks.
+
+    Args:
+        song: Song to analyze.
+
+    Returns:
+        SwingAnalysis representing the overall swing feel.
+    """
+    all_notes: list[NoteEvent] = []
+
+    for track in song.tracks:
+        all_notes.extend(track.notes)
+
+    if not all_notes:
+        return SwingAnalysis(
+            style=SwingStyle.STRAIGHT,
+            ratio=0.5,
+            confidence=0.0,
+            sample_count=0,
+        )
+
+    # Get beats per bar from first time signature
+    beats_per_bar = 4.0
+    if song.time_sig_map:
+        ts = song.time_sig_map[0]
+        beats_per_bar = ts.beats_per_bar
+
+    return detect_swing(all_notes, beats_per_bar)
 
     return song
