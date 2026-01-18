@@ -90,13 +90,13 @@ def analyze(
 
     # Analyze files
     from midi_analyzer.ingest import parse_midi_file
-    from midi_analyzer.harmony import detect_key, detect_chords
+    from midi_analyzer.harmony import detect_key_for_song, detect_chord_progression_for_song
     from midi_analyzer.analysis import classify_track_role
 
     for file_path in files:
         try:
             song = parse_midi_file(file_path)
-            key = detect_key(song)
+            key = detect_key_for_song(song)
 
             # Basic summary line
             click.echo(f"\n{file_path.name}: {key.key.name} {key.mode.value} ({len(song.tracks)} tracks)")
@@ -107,7 +107,7 @@ def analyze(
                 click.echo(f"  Duration: {song.duration_beats:.1f} beats")
 
                 # Detect chord progression
-                chords = detect_chords(song)
+                chords = detect_chord_progression_for_song(song)
                 if chords.events:
                     chord_symbols = [c.chord.symbol for c in chords.events[:8]]
                     progression = " → ".join(chord_symbols)
