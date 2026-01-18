@@ -125,6 +125,8 @@ class ClipLibrary:
         self.db_path = Path(db_path)
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
+        # Use WAL mode for better concurrent access
+        self.connection.execute("PRAGMA journal_mode=WAL")
         self._genre_normalizer = GenreNormalizer()
         self._init_schema()
 
@@ -273,7 +275,6 @@ class ClipLibrary:
             clips.append(clip)
 
         self.connection.commit()
-        self._rebuild_fts()
 
         return clips
 
@@ -326,6 +327,9 @@ class ClipLibrary:
                 if error_callback:
                     error_callback(file_path, e)
                 continue
+
+        # Rebuild FTS index once at the end
+        self._rebuild_fts()
 
         return total_clips
 
