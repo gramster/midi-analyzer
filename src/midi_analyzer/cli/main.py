@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from midi_analyzer import __version__
+from midi_analyzer.models.core import TrackRole
 
 
 @click.group()
@@ -24,6 +25,10 @@ def cli(ctx: click.Context, verbose: bool, config: Path | None) -> None:
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     ctx.obj["config"] = config
+
+
+# Default library database path
+DEFAULT_LIBRARY = Path("midi_library.db")
 
 
 @cli.command()
@@ -80,9 +85,293 @@ def analyze(
         if len(files) > 10:
             click.echo(f"  ... and {len(files) - 10} more")
 
-    # TODO: Implement actual analysis pipeline
-    click.echo("Analysis pipeline not yet implemented")
-    click.echo(f"Would write to: {output}")
+    # Analyze files
+    from midi_analyzer.ingest import parse_midi_file
+    from midi_analyzer.harmony import detect_key, detect_chords
+
+    for file_path in files:
+        try:
+            song = parse_midi_file(file_path)
+            key = detect_key(song)
+            click.echo(f"{file_path.name}: {key.key.name} {key.mode.value} ({len(song.tracks)} tracks)")
+        except Exception as e:
+            if verbose:
+                click.echo(f"Error processing {file_path}: {e}", err=True)
+
+
+# =============================================================================
+# Library Commands (clip indexing and querying)
+# =============================================================================
+
+
+@cli.group()
+def library() -> None:
+    """Manage the clip library - index, query, and export MIDI clips."""
+    pass
+
+
+@library.command("index")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("-r", "--recursive", is_flag=True, help="Recursively process directories.")
+@click.option("-g", "--genre", multiple=True, help="Genre tags for indexed files.")
+@click.option("-a", "--artist", default="", help="Artist name for indexed files.")
+@click.option("-t", "--tag", multiple=True, help="Additional tags.")
+@click.option(
+    "-d", "--database",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+@click.pass_context
+def library_index(
+    ctx: click.Context,
+    path: Path,
+    recursive: bool,
+    genre: tuple[str, ...],
+    artist: str,
+    tag: tuple[str, ...],
+    database: Path,
+) -> None:
+    """Index MIDI files into the clip library.
+
+    PATH can be a single MIDI file or a directory.
+    """
+    from midi_analyzer.library import ClipLibrary
+
+    verbose = ctx.obj.get("verbose", False)
+
+    with ClipLibrary(database) as library:
+        if path.is_file():
+            clips = library.index_file(
+                path,
+                genres=list(genre) if genre else None,
+                artist=artist,
+                tags=list(tag) if tag else None,
+            )
+            click.echo(f"Indexed {len(clips)} clip(s) from {path.name}")
+        else:
+            def progress(current: int, total: int, filename: str) -> None:
+                if verbose:
+                    click.echo(f"  [{current}/{total}] {filename}")
+
+            count = library.index_directory(
+                path,
+                recursive=recursive,
+                genres=list(genre) if genre else None,
+                artist=artist,
+                tags=list(tag) if tag else None,
+                progress_callback=progress if verbose else None,
+            )
+            click.echo(f"Indexed {count} clip(s) from {path}")
+
+
+@library.command("query")
+@click.option("--role", type=click.Choice(["drums", "bass", "chords", "lead", "arp", "pad", "other"]))
+@click.option("-g", "--genre", help="Filter by genre.")
+@click.option("-a", "--artist", help="Filter by artist (partial match).")
+@click.option("-t", "--tag", multiple=True, help="Filter by tag.")
+@click.option("--min-notes", type=int, help="Minimum note count.")
+@click.option("--max-notes", type=int, help="Maximum note count.")
+@click.option("--min-bars", type=int, help="Minimum duration in bars.")
+@click.option("--max-bars", type=int, help="Maximum duration in bars.")
+@click.option("-l", "--limit", type=int, default=20, help="Maximum results.")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+@click.pass_context
+def library_query(
+    ctx: click.Context,
+    role: str | None,
+    genre: str | None,
+    artist: str | None,
+    tag: tuple[str, ...],
+    min_notes: int | None,
+    max_notes: int | None,
+    min_bars: int | None,
+    max_bars: int | None,
+    limit: int,
+    database: Path,
+) -> None:
+    """Query clips from the library.
+
+    Example: midi-analyzer library query --role bass --genre jazz
+    """
+    from midi_analyzer.library import ClipLibrary, ClipQuery
+
+    with ClipLibrary(database) as library:
+        query = ClipQuery(
+            role=TrackRole(role) if role else None,
+            genre=genre,
+            artist=artist,
+            min_notes=min_notes,
+            max_notes=max_notes,
+            min_bars=min_bars,
+            max_bars=max_bars,
+            tags=list(tag) if tag else None,
+            limit=limit,
+        )
+
+        clips = library.query(query)
+
+        if not clips:
+            click.echo("No clips found matching criteria.")
+            return
+
+        click.echo(f"Found {len(clips)} clip(s):\n")
+
+        for clip in clips:
+            genres_str = ", ".join(clip.genres) if clip.genres else "none"
+            click.echo(
+                f"  {clip.clip_id}: {clip.track_name or 'Untitled'}\n"
+                f"    Role: {clip.role.value}, Notes: {clip.note_count}, Bars: {clip.duration_bars}\n"
+                f"    Artist: {clip.artist or 'Unknown'}, Genres: {genres_str}\n"
+                f"    Source: {Path(clip.source_path).name}\n"
+            )
+
+
+@library.command("export")
+@click.argument("clip_id")
+@click.option(
+    "-o", "--output",
+    type=click.Path(path_type=Path),
+    help="Output MIDI file path.",
+)
+@click.option("--tempo", type=float, default=120.0, help="Tempo in BPM.")
+@click.option("--transpose", type=int, default=0, help="Semitones to transpose.")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+@click.pass_context
+def library_export(
+    ctx: click.Context,
+    clip_id: str,
+    output: Path | None,
+    tempo: float,
+    transpose: int,
+    database: Path,
+) -> None:
+    """Export a clip to a MIDI file.
+
+    Example: midi-analyzer library export abc123_0 -o bass_clip.mid
+    """
+    from midi_analyzer.export import ExportOptions, export_track
+    from midi_analyzer.library import ClipLibrary, ClipQuery
+
+    with ClipLibrary(database) as library:
+        # Find the clip
+        cursor = library.connection.cursor()
+        cursor.execute("SELECT * FROM clips WHERE clip_id = ?", (clip_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            click.echo(f"Clip '{clip_id}' not found.", err=True)
+            raise SystemExit(1)
+
+        clip = library._row_to_clip(row)
+        track = library.load_track(clip)
+
+        # Determine output path
+        if output is None:
+            safe_name = clip.track_name.replace(" ", "_") if clip.track_name else clip_id
+            output = Path(f"{safe_name}.mid")
+
+        options = ExportOptions(
+            transpose=transpose,
+            normalize_start=True,
+        )
+
+        export_track(track, output, tempo_bpm=tempo, options=options)
+        click.echo(f"Exported clip to {output}")
+
+
+@library.command("stats")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+@click.pass_context
+def library_stats(ctx: click.Context, database: Path) -> None:
+    """Show library statistics."""
+    from midi_analyzer.library import ClipLibrary
+
+    with ClipLibrary(database) as library:
+        stats = library.get_stats()
+
+        click.echo(f"Library Statistics ({database}):\n")
+        click.echo(f"  Total clips: {stats.total_clips}")
+        click.echo(f"  Total songs: {stats.total_songs}")
+
+        if stats.clips_by_role:
+            click.echo("\n  Clips by role:")
+            for role, count in sorted(stats.clips_by_role.items()):
+                click.echo(f"    {role}: {count}")
+
+        if stats.clips_by_genre:
+            click.echo("\n  Top genres:")
+            top_genres = sorted(stats.clips_by_genre.items(), key=lambda x: -x[1])[:10]
+            for genre, count in top_genres:
+                click.echo(f"    {genre}: {count}")
+
+        if stats.artists:
+            click.echo(f"\n  Artists: {len(stats.artists)}")
+            for artist in stats.artists[:10]:
+                click.echo(f"    - {artist}")
+            if len(stats.artists) > 10:
+                click.echo(f"    ... and {len(stats.artists) - 10} more")
+
+
+@library.command("list-genres")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+def library_list_genres(database: Path) -> None:
+    """List all genres in the library."""
+    from midi_analyzer.library import ClipLibrary
+
+    with ClipLibrary(database) as library:
+        genres = library.list_genres()
+
+        if not genres:
+            click.echo("No genres found in library.")
+            return
+
+        click.echo(f"Genres ({len(genres)}):")
+        for genre in genres:
+            click.echo(f"  - {genre}")
+
+
+@library.command("list-artists")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+def library_list_artists(database: Path) -> None:
+    """List all artists in the library."""
+    from midi_analyzer.library import ClipLibrary
+
+    with ClipLibrary(database) as library:
+        artists = library.list_artists()
+
+        if not artists:
+            click.echo("No artists found in library.")
+            return
+
+        click.echo(f"Artists ({len(artists)}):")
+        for artist in artists:
+            click.echo(f"  - {artist}")
 
 
 @cli.command()
@@ -95,7 +384,7 @@ def analyze(
     "-d",
     "--database",
     type=click.Path(exists=True, path_type=Path),
-    default="patterns.db",
+    default=DEFAULT_LIBRARY,
     help="Pattern database path.",
 )
 @click.pass_context
@@ -108,25 +397,38 @@ def search(
     limit: int,
     database: Path,
 ) -> None:
-    """Search for patterns in the library."""
+    """Search for patterns in the library.
+
+    Shortcut for 'library query'. For more options, use 'library query'.
+    """
+    from midi_analyzer.library import ClipLibrary, ClipQuery
+
     verbose = ctx.obj.get("verbose", False)
 
-    filters = []
-    if role:
-        filters.append(f"role={role}")
-    if meter:
-        filters.append(f"meter={meter}")
-    if genre:
-        filters.append(f"genre={genre}")
-    for t in tag:
-        filters.append(f"tag={t}")
+    with ClipLibrary(database) as library:
+        query = ClipQuery(
+            role=TrackRole(role) if role else None,
+            genre=genre,
+            tags=list(tag) if tag else None,
+            limit=limit,
+        )
 
-    if verbose:
-        click.echo(f"Searching with filters: {', '.join(filters) or 'none'}")
-        click.echo(f"Database: {database}")
+        clips = library.query(query)
 
-    # TODO: Implement pattern search
-    click.echo("Pattern search not yet implemented")
+        if not clips:
+            click.echo("No patterns found matching criteria.")
+            return
+
+        click.echo(f"Found {len(clips)} pattern(s):\n")
+
+        for clip in clips:
+            genres_str = ", ".join(clip.genres) if clip.genres else ""
+            artist_str = f" by {clip.artist}" if clip.artist else ""
+            click.echo(
+                f"  {clip.clip_id}: {clip.track_name or 'Untitled'} [{clip.role.value}]{artist_str}"
+            )
+            if verbose and genres_str:
+                click.echo(f"    Genres: {genres_str}")
 
 
 @cli.command()
@@ -134,29 +436,39 @@ def search(
     "-d",
     "--database",
     type=click.Path(exists=True, path_type=Path),
-    default="patterns.db",
+    default=DEFAULT_LIBRARY,
     help="Pattern database path.",
 )
 @click.pass_context
 def stats(ctx: click.Context, database: Path) -> None:
-    """Show statistics about the pattern library."""
-    verbose = ctx.obj.get("verbose", False)
+    """Show statistics about the pattern library.
 
-    if verbose:
-        click.echo(f"Database: {database}")
+    Shortcut for 'library stats'.
+    """
+    # Delegate to library stats
+    from midi_analyzer.library import ClipLibrary
 
-    # TODO: Implement stats display
-    click.echo("Statistics display not yet implemented")
+    with ClipLibrary(database) as library:
+        stats_info = library.get_stats()
+
+        click.echo(f"Library: {database}\n")
+        click.echo(f"  Clips: {stats_info.total_clips}")
+        click.echo(f"  Songs: {stats_info.total_songs}")
+
+        if stats_info.clips_by_role:
+            click.echo("\n  By role:")
+            for role, count in sorted(stats_info.clips_by_role.items()):
+                click.echo(f"    {role}: {count}")
 
 
 @cli.command()
-@click.argument("pattern_id")
+@click.argument("clip_id")
 @click.option(
     "-f",
     "--format",
     "output_format",
     type=click.Choice(["json", "midi"]),
-    default="json",
+    default="midi",
     help="Export format.",
 )
 @click.option(
@@ -165,30 +477,84 @@ def stats(ctx: click.Context, database: Path) -> None:
     type=click.Path(path_type=Path),
     help="Output file path.",
 )
+@click.option("--tempo", type=float, default=120.0, help="Tempo in BPM (for MIDI export).")
+@click.option("--transpose", type=int, default=0, help="Semitones to transpose.")
 @click.option(
     "-d",
     "--database",
     type=click.Path(exists=True, path_type=Path),
-    default="patterns.db",
+    default=DEFAULT_LIBRARY,
     help="Pattern database path.",
 )
 @click.pass_context
 def export(
     ctx: click.Context,
-    pattern_id: str,
+    clip_id: str,
     output_format: str,
     output: Path | None,
+    tempo: float,
+    transpose: int,
     database: Path,
 ) -> None:
-    """Export a pattern to JSON or MIDI format."""
-    verbose = ctx.obj.get("verbose", False)
+    """Export a pattern/clip to JSON or MIDI format.
 
-    if verbose:
-        click.echo(f"Exporting pattern {pattern_id} as {output_format}")
-        click.echo(f"Database: {database}")
+    CLIP_ID is the clip identifier (use 'search' or 'library query' to find IDs).
+    """
+    import json
 
-    # TODO: Implement pattern export
-    click.echo("Pattern export not yet implemented")
+    from midi_analyzer.export import ExportOptions, export_track
+    from midi_analyzer.library import ClipLibrary
+
+    with ClipLibrary(database) as library:
+        # Find the clip
+        cursor = library.connection.cursor()
+        cursor.execute("SELECT * FROM clips WHERE clip_id = ?", (clip_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            click.echo(f"Clip '{clip_id}' not found.", err=True)
+            raise SystemExit(1)
+
+        clip = library._row_to_clip(row)
+        track = library.load_track(clip)
+
+        if output_format == "json":
+            # Export as JSON
+            data = {
+                "clip_id": clip.clip_id,
+                "track_name": clip.track_name,
+                "role": clip.role.value,
+                "artist": clip.artist,
+                "genres": clip.genres,
+                "note_count": clip.note_count,
+                "notes": [
+                    {
+                        "pitch": n.pitch,
+                        "velocity": n.velocity,
+                        "start_beat": n.start_beat,
+                        "duration_beats": n.duration_beats,
+                    }
+                    for n in track.notes
+                ],
+            }
+            if output:
+                output.write_text(json.dumps(data, indent=2))
+                click.echo(f"Exported to {output}")
+            else:
+                click.echo(json.dumps(data, indent=2))
+        else:
+            # Export as MIDI
+            if output is None:
+                safe_name = clip.track_name.replace(" ", "_") if clip.track_name else clip_id
+                output = Path(f"{safe_name}.mid")
+
+            options = ExportOptions(
+                transpose=transpose,
+                normalize_start=True,
+            )
+
+            export_track(track, output, tempo_bpm=tempo, options=options)
+            click.echo(f"Exported to {output}")
 
 
 if __name__ == "__main__":
