@@ -45,6 +45,9 @@ music21 = [
 player = [
     "pygame>=2.5.0",
 ]
+gui = [
+    "PyQt6>=6.5.0",
+]
 
 [project.scripts]
 midi-analyzer = "midi_analyzer.cli:cli"

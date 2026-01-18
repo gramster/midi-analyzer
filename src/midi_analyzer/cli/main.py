@@ -1217,6 +1217,34 @@ def play(
                 click.echo("\nStopped.")
 
 
+@cli.command()
+@click.option(
+    "-d",
+    "--db",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Path to library database.",
+)
+def gui(db_path: Path) -> None:
+    """Launch the graphical user interface.
+    
+    Requires PyQt6 to be installed: pip install midi-analyzer[gui]
+    """
+    try:
+        from midi_analyzer.gui import run_gui
+    except ImportError as e:
+        click.echo(
+            f"GUI dependencies not installed: {e}\n\n"
+            "Install with: pip install midi-analyzer[gui]",
+            err=True,
+        )
+        raise SystemExit(1)
+    
+    click.echo(f"Launching GUI with database: {db_path}")
+    run_gui(db_path)
+
+
 @cli.command("list-devices")
 def list_devices() -> None:
     """List available MIDI output devices."""
