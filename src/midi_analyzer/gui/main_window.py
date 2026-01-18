@@ -26,6 +26,7 @@ from midi_analyzer.gui.widgets.song_detail import SongDetailWidget
 
 if TYPE_CHECKING:
     from midi_analyzer.library import ClipInfo, ClipLibrary
+    from midi_analyzer.models.core import Song
 
 
 class MainWindow(QMainWindow):
@@ -507,6 +508,10 @@ class MainWindow(QMainWindow):
         if self._library:
             try:
                 song = self._library.load_song(clip)
+                
+                # Analyze tracks if not already analyzed
+                self._ensure_song_analyzed(song)
+                
                 self.song_detail.set_song(song, clip)
                 self.playback_controls.set_song(song)
                 self.status_bar.showMessage(
@@ -514,6 +519,27 @@ class MainWindow(QMainWindow):
                 )
             except Exception as e:
                 self.status_bar.showMessage(f"Error loading song: {e}")
+
+    def _ensure_song_analyzed(self, song: Song) -> None:
+        """Ensure all tracks in the song have been analyzed."""
+        from midi_analyzer.analysis.features import FeatureExtractor
+        from midi_analyzer.analysis.roles import classify_track_role
+        
+        needs_analysis = any(
+            track.notes and track.features is None
+            for track in song.tracks
+        )
+        
+        if not needs_analysis:
+            return
+        
+        feature_extractor = FeatureExtractor()
+        total_bars = song.total_bars or 1
+        
+        for track in song.tracks:
+            if track.notes and track.features is None:
+                track.features = feature_extractor.extract_features(track, total_bars)
+                track.role_probs = classify_track_role(track)
 
     def _on_song_double_clicked(self, clip: ClipInfo) -> None:
         """Handle song double-click (play)."""
