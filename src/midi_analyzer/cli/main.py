@@ -104,7 +104,7 @@ def analyze(
             if verbose:
                 # Show timing info
                 click.echo(f"  Tempo: {song.primary_tempo:.1f} BPM, Time sig: {song.primary_time_sig}")
-                click.echo(f"  Duration: {song.duration_beats:.1f} beats")
+                click.echo(f"  Duration: {song.total_beats:.1f} beats ({song.total_bars} bars)")
 
                 # Detect chord progression
                 chords = detect_chord_progression_for_song(song)
@@ -122,15 +122,15 @@ def analyze(
                         continue
 
                     role_probs = classify_track_role(track)
-                    role = role_probs.primary_role
+                    role = role_probs.primary_role()
 
                     # Calculate pitch range
                     pitches = [n.pitch for n in track.notes]
                     pitch_range = f"{min(pitches)}-{max(pitches)}"
 
                     # Note density
-                    if song.duration_beats > 0:
-                        notes_per_beat = len(track.notes) / song.duration_beats
+                    if song.total_beats > 0:
+                        notes_per_beat = len(track.notes) / song.total_beats
                     else:
                         notes_per_beat = 0
 
