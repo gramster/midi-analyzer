@@ -39,31 +39,19 @@ DEFAULT_LIBRARY = Path("midi_library.db")
     is_flag=True,
     help="Recursively process directories.",
 )
-@click.option(
-    "-o",
-    "--output",
-    type=click.Path(path_type=Path),
-    help="Output database path.",
-    default="patterns.db",
-)
-@click.option(
-    "--skip-genre",
-    is_flag=True,
-    help="Skip genre/tag retrieval from web APIs.",
-)
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed analysis output.")
 @click.pass_context
 def analyze(
     ctx: click.Context,
     path: Path,
     recursive: bool,
-    output: Path,
-    skip_genre: bool,
     verbose: bool,
 ) -> None:
-    """Analyze MIDI files and extract patterns.
+    """Analyze MIDI files and display results.
 
     PATH can be a single MIDI file or a directory containing MIDI files.
+    
+    To index files into a searchable database, use 'library index' instead.
     """
     # Use command-level verbose or parent-level verbose
     verbose = verbose or ctx.obj.get("verbose", False)
