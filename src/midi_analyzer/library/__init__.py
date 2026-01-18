@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from midi_analyzer.analysis.features import FeatureExtractor
 from midi_analyzer.analysis.roles import classify_track_role
 from midi_analyzer.ingest import parse_midi_file
+from midi_analyzer.ingest.metadata import MetadataExtractor
 from midi_analyzer.metadata.genres import GenreNormalizer, GenreResult, normalize_tag
 from midi_analyzer.models.core import Song, Track, TrackRole
 
@@ -197,6 +198,12 @@ class ClipLibrary:
         """
         file_path = Path(file_path)
         song = parse_midi_file(file_path)
+
+        # Extract metadata from filename/path if not provided
+        if not artist:
+            extractor = MetadataExtractor()
+            metadata = extractor.extract(file_path)
+            artist = metadata.artist or ""
 
         # Normalize genres
         normalized_genres = []

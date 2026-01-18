@@ -216,35 +216,42 @@ class MetadataExtractor:
     def _parse_nonstop2k_format(self, filename: str) -> SongMetadata:
         """Parse nonstop2k format: artist-maybe-more-title-words.
 
-        Example: le-youth-jerro-lizzy-land-lost -> "Le Youth ft Jerro, Lizzy" / "Land Lost"
+        Example: le-youth-jerro-lizzy-land-lost -> "Le Youth Jerro Lizzy" / "Land Lost"
+        Example: adriatique-whomadewho-miracle -> "Adriatique Whomadewho" / "Miracle"
+        
+        Heuristics:
+        - Remove numeric-only parts (often IDs added by scrapers)
+        - For 3 parts: first 2 are artist, last 1 is title
+        - For 4+ parts: first half is artist, second half is title
         """
-        # This format is tricky - we need heuristics
+        # Split on hyphens
         parts = filename.lower().split("-")
+        
+        # Filter out pure numeric parts (like "23671" IDs)
+        parts = [p for p in parts if not p.isdigit()]
 
         if len(parts) < 3:
             return SongMetadata()
 
-        # Look for common patterns
-        # Often: artist-collab-title-title or artist-title-title
+        # For 3 parts: artist-artist-title or artist-title-title
+        if len(parts) == 3:
+            title_start = 2
+        else:
+            # For 4+, use middle point
+            title_start = len(parts) // 2
 
-        # For now, use a simple heuristic: last 2-3 words are likely the title
-        if len(parts) >= 4:
-            # Assume first half is artist, second half is title
-            mid = len(parts) // 2
-            artist_parts = parts[:mid]
-            title_parts = parts[mid:]
+        artist_parts = parts[:title_start]
+        title_parts = parts[title_start:]
 
-            artist = " ".join(artist_parts).title()
-            title = " ".join(title_parts).title()
+        artist = " ".join(artist_parts).title()
+        title = " ".join(title_parts).title()
 
-            return SongMetadata(
-                artist=artist,
-                title=title,
-                source="filename_nonstop2k",
-                confidence=0.4,
-            )
-
-        return SongMetadata()
+        return SongMetadata(
+            artist=artist,
+            title=title,
+            source="filename_nonstop2k",
+            confidence=0.4,
+        )
 
     def _parse_hyphenated_words(self, filename: str) -> SongMetadata:
         """Parse hyphen-separated words as a title (no artist)."""
