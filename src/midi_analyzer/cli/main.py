@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -463,6 +464,112 @@ def library_list_artists(database: Path) -> None:
         click.echo(f"Artists ({len(artists)}):")
         for artist in artists:
             click.echo(f"  - {artist}")
+
+
+@library.command("enrich")
+@click.option(
+    "-d", "--database",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_LIBRARY,
+    help="Library database path.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be updated without making changes.",
+)
+@click.pass_context
+def library_enrich(ctx: click.Context, database: Path, dry_run: bool) -> None:
+    """Enrich library clips with genre tags from MusicBrainz.
+
+    Queries MusicBrainz for each unique artist to fetch genre/style tags,
+    then updates all clips by that artist. Rate limited to 1 request/second.
+    """
+    from midi_analyzer.library import ClipLibrary
+    from midi_analyzer.metadata.musicbrainz import get_genre_tags, search_artist
+
+    verbose = ctx.obj.get("verbose", False) if ctx.obj else False
+
+    with ClipLibrary(database) as lib:
+        # Get unique artists
+        artists = lib.list_artists()
+
+        if not artists:
+            click.echo("No artists found in library.")
+            return
+
+        click.echo(f"Found {len(artists)} unique artist(s). Querying MusicBrainz...")
+        click.echo("(Rate limited to 1 request/second)\n")
+
+        updated_count = 0
+        skipped_count = 0
+        error_count = 0
+
+        for i, artist in enumerate(artists, 1):
+            if not artist:
+                skipped_count += 1
+                continue
+
+            # For collaborations like "Artist1, Artist2", search for first artist
+            search_artist_name = artist.split(",")[0].strip()
+
+            try:
+                # Search for artist to get their tags
+                artist_results = search_artist(search_artist_name, limit=1)
+
+                tags: list[str] = []
+                if artist_results:
+                    tags = artist_results[0].tags
+
+                if verbose or tags:
+                    status = f"[{i}/{len(artists)}] {artist}"
+                    if tags:
+                        click.echo(f"{status}: {', '.join(tags[:5])}")
+                    elif verbose:
+                        click.echo(f"{status}: (no tags found)")
+
+                if tags and not dry_run:
+                    # Update all clips by this artist
+                    cursor = lib.connection.cursor()
+                    cursor.execute(
+                        "SELECT clip_id, genres FROM clips WHERE artist = ?",
+                        (artist,),
+                    )
+                    rows = cursor.fetchall()
+
+                    for row in rows:
+                        clip_id = row[0]
+                        existing = json.loads(row[1]) if row[1] else []
+                        # Merge tags, avoiding duplicates
+                        merged = list(dict.fromkeys(existing + tags))
+                        lib.update_metadata(clip_id, genres=merged)
+                        updated_count += 1
+
+                elif tags:
+                    # Dry run - count what would be updated
+                    cursor = lib.connection.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM clips WHERE artist = ?",
+                        (artist,),
+                    )
+                    count = cursor.fetchone()[0]
+                    updated_count += count
+
+            except Exception as e:
+                error_count += 1
+                if verbose:
+                    click.echo(f"[{i}/{len(artists)}] {artist}: ERROR - {e}", err=True)
+
+        click.echo()
+        if dry_run:
+            click.echo(f"Dry run complete. Would update {updated_count} clip(s).")
+        else:
+            click.echo(f"Enriched {updated_count} clip(s) with genre tags.")
+
+        if skipped_count:
+            click.echo(f"Skipped {skipped_count} clip(s) with no artist.")
+        if error_count:
+            click.echo(f"Errors: {error_count}")
 
 
 @cli.command()
