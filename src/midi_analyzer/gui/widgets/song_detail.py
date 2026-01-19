@@ -141,6 +141,18 @@ class SongDetailWidget(QWidget):
         self.notes_label = QLabel("-")
         stats_layout.addWidget(self.notes_label, row, 1)
 
+        row += 1
+        stats_layout.addWidget(QLabel("Key:"), row, 0, Qt.AlignmentFlag.AlignRight)
+        self.key_label = QLabel("-")
+        stats_layout.addWidget(self.key_label, row, 1)
+
+        row += 1
+        stats_layout.addWidget(QLabel("Chords:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        self.chords_label = QLabel("-")
+        self.chords_label.setWordWrap(True)
+        self.chords_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        stats_layout.addWidget(self.chords_label, row, 1)
+
         info_layout.addWidget(stats_group)
         info_layout.addStretch()
 
@@ -228,6 +240,8 @@ class SongDetailWidget(QWidget):
         self.bars_label.setText("-")
         self.tracks_label.setText("-")
         self.notes_label.setText("-")
+        self.key_label.setText("-")
+        self.chords_label.setText("-")
 
         self.track_table.setRowCount(0)
         self.sections_text.clear()
@@ -274,6 +288,73 @@ class SongDetailWidget(QWidget):
 
         total_notes = sum(len(t.notes) for t in song.tracks)
         self.notes_label.setText(str(total_notes))
+
+        # Detect key and chord progression
+        self._update_harmony(song)
+
+    def _update_harmony(self, song: Song) -> None:
+        """Update key and chord progression display."""
+        try:
+            from midi_analyzer.harmony.chords import detect_chord_progression_for_song
+            from midi_analyzer.harmony.keys import detect_key
+
+            # Collect all non-drum notes for analysis
+            all_notes = []
+            for track in song.tracks:
+                # Skip drum tracks (channel 10)
+                if track.channel == 9:  # MIDI channel 10 is index 9
+                    continue
+                all_notes.extend(track.notes)
+
+            if not all_notes:
+                self.key_label.setText("Unknown")
+                self.chords_label.setText("-")
+                return
+
+            # Detect key
+            key = detect_key(all_notes)
+            if key:
+                key_str = f"{key.root_name} {key.mode.value}"
+                self.key_label.setText(key_str)
+            else:
+                self.key_label.setText("Unknown")
+
+            # Detect chord progression
+            progression = detect_chord_progression_for_song(song)
+            
+            if progression.chords:
+                # Get simplified chord names (no consecutive duplicates)
+                simplified = progression.simplify()
+                
+                # Also get Roman numerals if we have a key
+                if progression.key:
+                    roman = progression.to_roman_numerals()
+                    # Remove consecutive duplicates from roman numerals too
+                    unique_roman = []
+                    for r in roman:
+                        if not unique_roman or r != unique_roman[-1]:
+                            unique_roman.append(r)
+                    
+                    # Show both: chord names and roman numerals
+                    chord_str = " → ".join(simplified[:12])  # Limit display
+                    if len(simplified) > 12:
+                        chord_str += " ..."
+                    roman_str = " → ".join(unique_roman[:12])
+                    if len(unique_roman) > 12:
+                        roman_str += " ..."
+                    
+                    self.chords_label.setText(f"{chord_str}\n({roman_str})")
+                else:
+                    chord_str = " → ".join(simplified[:12])
+                    if len(simplified) > 12:
+                        chord_str += " ..."
+                    self.chords_label.setText(chord_str)
+            else:
+                self.chords_label.setText("No chords detected")
+
+        except Exception as e:
+            self.key_label.setText("Error")
+            self.chords_label.setText(f"Error: {e}")
 
     def _update_tracks(self) -> None:
         """Update the tracks table."""

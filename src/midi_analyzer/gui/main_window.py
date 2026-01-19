@@ -553,6 +553,9 @@ class MainWindow(QMainWindow):
     # Signal handlers
     def _on_song_selected(self, clip: ClipInfo) -> None:
         """Handle song selection."""
+        # Stop any current playback before switching songs
+        self.playback_controls.stop()
+        
         self._current_song = clip
 
         if self._library:

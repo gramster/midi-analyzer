@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from midi_analyzer.analysis.arpeggios import ArpAnalysis
     from midi_analyzer.models.core import NoteEvent, Song, Track
 
+from midi_analyzer.models.core import TrackRole
+
 
 # Color palette for track roles
 ROLE_COLORS = {
@@ -39,6 +41,9 @@ ROLE_COLORS = {
 
 class PianoRollWidget(QWidget):
     """Widget for displaying notes in piano roll format."""
+
+    # Signal emitted when playback position changes, with x position ratio (0-1)
+    playback_position_changed = pyqtSignal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,6 +108,13 @@ class PianoRollWidget(QWidget):
         # Convert seconds to beats
         beats_per_second = tempo_bpm / 60.0
         self._playback_position = position_seconds * beats_per_second
+        
+        # Emit position ratio for scroll synchronization
+        total_beats = self._bars * self._beats_per_bar
+        if total_beats > 0:
+            position_ratio = self._playback_position / total_beats
+            self.playback_position_changed.emit(position_ratio)
+        
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -320,14 +332,17 @@ class PatternViewWidget(QWidget):
         self.tabs = QTabWidget()
 
         # Piano roll tab
-        piano_scroll = QScrollArea()
-        piano_scroll.setWidgetResizable(True)
-        piano_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.piano_scroll = QScrollArea()
+        self.piano_scroll.setWidgetResizable(True)
+        self.piano_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self.piano_roll = PianoRollWidget()
-        piano_scroll.setWidget(self.piano_roll)
+        self.piano_scroll.setWidget(self.piano_roll)
+        
+        # Connect playback position to scroll
+        self.piano_roll.playback_position_changed.connect(self._on_playback_position_changed)
 
-        self.tabs.addTab(piano_scroll, "Piano Roll")
+        self.tabs.addTab(self.piano_scroll, "Piano Roll")
 
         # Arp patterns tab
         arp_scroll = QScrollArea()
@@ -342,11 +357,33 @@ class PatternViewWidget(QWidget):
         pattern_widget = QWidget()
         pattern_layout = QVBoxLayout(pattern_widget)
 
-        self.pattern_info = QLabel("Select a track to view patterns")
-        self.pattern_info.setWordWrap(True)
-        self.pattern_info.setAlignment(Qt.AlignmentFlag.AlignTop)
-        pattern_layout.addWidget(self.pattern_info)
-        pattern_layout.addStretch()
+        # Pattern summary label
+        self.pattern_summary = QLabel("Select a track to detect patterns")
+        pattern_layout.addWidget(self.pattern_summary)
+
+        # Pattern table
+        from PyQt6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView
+        
+        self.pattern_table = QTableWidget()
+        self.pattern_table.setColumnCount(5)
+        self.pattern_table.setHorizontalHeaderLabels(["Bars", "Occurrences", "Positions", "Density", "Select"])
+        self.pattern_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.pattern_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.pattern_table.setAlternatingRowColors(True)
+        self.pattern_table.verticalHeader().setVisible(False)
+        
+        header = self.pattern_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(0, 50)
+        header.resizeSection(1, 80)
+        header.resizeSection(3, 60)
+        header.resizeSection(4, 60)
+        
+        pattern_layout.addWidget(self.pattern_table)
 
         self.tabs.addTab(pattern_widget, "Patterns")
 
@@ -356,6 +393,27 @@ class PatternViewWidget(QWidget):
         """Connect widget signals."""
         self.track_selector.currentIndexChanged.connect(self._on_track_changed)
         self.bars_spinner.valueChanged.connect(self._on_bars_changed)
+
+    def _on_playback_position_changed(self, position_ratio: float) -> None:
+        """Scroll piano roll to follow playback position.
+        
+        Args:
+            position_ratio: Position as ratio of total length (0-1).
+        """
+        scrollbar = self.piano_scroll.horizontalScrollBar()
+        if scrollbar:
+            # Calculate scroll position with some look-ahead margin
+            max_scroll = scrollbar.maximum()
+            viewport_width = self.piano_scroll.viewport().width()
+            content_width = self.piano_roll.width()
+            
+            if content_width > viewport_width:
+                # Position the playhead at about 1/3 from left edge of viewport
+                margin_ratio = 0.33
+                target_ratio = max(0, position_ratio - (margin_ratio * viewport_width / content_width))
+                scroll_value = int(target_ratio * max_scroll / (1.0 - viewport_width / content_width)) if content_width > viewport_width else 0
+                scroll_value = min(max_scroll, max(0, scroll_value))
+                scrollbar.setValue(scroll_value)
 
     def show_song_analysis(self, song: Song) -> None:
         """Show analysis for an entire song.
@@ -409,8 +467,8 @@ class PatternViewWidget(QWidget):
         bars = min(self.bars_spinner.value(), song.total_bars or 16)
         self.piano_roll.set_notes(track.notes, bars, role.value)
 
-        # Update arp view if arp role
-        if role_probs.arp > 0.3:
+        # Update arp view if primary role is arp OR arp probability is significant
+        if role == TrackRole.ARP or role_probs.arp > 0.15:
             self._show_arp_analysis(track, song)
         else:
             self.arp_view.clear()
@@ -422,10 +480,12 @@ class PatternViewWidget(QWidget):
         """Clear all views."""
         self._song = None
         self._track = None
+        self._detected_clusters = []
         self.track_selector.clear()
         self.piano_roll.clear()
         self.arp_view.clear()
-        self.pattern_info.setText("Select a track to view patterns")
+        self.pattern_summary.setText("Select a track to detect patterns")
+        self.pattern_table.setRowCount(0)
 
     def _show_all_tracks(self) -> None:
         """Show all tracks combined."""
@@ -440,9 +500,10 @@ class PatternViewWidget(QWidget):
         bars = min(self.bars_spinner.value(), self._song.total_bars or 16)
         self.piano_roll.set_notes(all_notes, bars, "other")
         self.arp_view.clear()
-        self.pattern_info.setText(
-            f"Showing all {len(self._song.tracks)} tracks\nTotal notes: {len(all_notes)}"
+        self.pattern_summary.setText(
+            f"Showing all {len(self._song.tracks)} tracks | Total notes: {len(all_notes)}"
         )
+        self.pattern_table.setRowCount(0)
 
     def _show_arp_analysis(self, track: Track, song: Song) -> None:
         """Show arpeggio analysis for a track."""
@@ -456,23 +517,106 @@ class PatternViewWidget(QWidget):
             self.arp_view.clear()
 
     def _update_pattern_info(self, track: Track, role: str) -> None:
-        """Update pattern info display."""
-        lines = [
-            f"Track: {track.name or f'Track {track.track_id}'}",
-            f"Role: {role}",
-            f"Notes: {len(track.notes)}",
-            f"Channel: {track.channel}",
-        ]
+        """Update pattern info display with actual repeating patterns."""
+        from PyQt6.QtWidgets import QTableWidgetItem, QPushButton
+        
+        # Update summary
+        self.pattern_summary.setText(
+            f"Track: {track.name or f'Track {track.track_id}'} | Role: {role} | Notes: {len(track.notes)}"
+        )
+        
+        # Detect repeating patterns
+        self.pattern_table.setRowCount(0)
+        
+        if not track.notes or self._song is None:
+            return
+            
+        try:
+            from midi_analyzer.patterns import deduplicate_track, chunk_track, Fingerprinter
+            
+            # Store detected clusters for visualization
+            self._detected_clusters = []
+            
+            # Try different chunk sizes and collect all patterns
+            all_clusters = []
+            fingerprinter = Fingerprinter()
+            
+            for chunk_size in [1, 2, 4, 8]:
+                chunks = chunk_track(track, self._song.time_sig_map, chunk_size)
+                if len(chunks) < 2:
+                    continue
+                    
+                # Generate fingerprints
+                fingerprints = [fingerprinter.combined_fingerprint(c) for c in chunks]
+                
+                # Deduplicate
+                result = deduplicate_track(chunks, fingerprints)
+                
+                # Keep clusters with 2+ occurrences
+                for cluster in result.clusters:
+                    if cluster.count >= 2:
+                        all_clusters.append((chunk_size, cluster))
+            
+            # Sort by occurrence count (descending), then by bar length (descending)
+            all_clusters.sort(key=lambda x: (x[1].count, x[0]), reverse=True)
+            
+            # Populate table (limit to top 20 patterns)
+            self._detected_clusters = all_clusters[:20]
+            
+            for i, (chunk_size, cluster) in enumerate(self._detected_clusters):
+                row = self.pattern_table.rowCount()
+                self.pattern_table.insertRow(row)
+                
+                # Bars
+                bars_item = QTableWidgetItem(str(chunk_size))
+                bars_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.pattern_table.setItem(row, 0, bars_item)
+                
+                # Occurrences
+                count_item = QTableWidgetItem(str(cluster.count))
+                count_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.pattern_table.setItem(row, 1, count_item)
+                
+                # Positions (bar numbers where this pattern appears)
+                positions = [str(m.start_bar + 1) for m in cluster.members[:6]]
+                if len(cluster.members) > 6:
+                    positions.append("...")
+                pos_item = QTableWidgetItem(", ".join(positions))
+                self.pattern_table.setItem(row, 2, pos_item)
+                
+                # Density
+                density = cluster.fingerprint.rhythm.density if cluster.fingerprint else 0
+                density_item = QTableWidgetItem(f"{density:.2f}")
+                density_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.pattern_table.setItem(row, 3, density_item)
+                
+                # View button
+                view_btn = QPushButton("View")
+                view_btn.setMaximumWidth(50)
+                view_btn.clicked.connect(lambda checked, idx=i: self._on_view_pattern(idx))
+                self.pattern_table.setCellWidget(row, 4, view_btn)
+                
+        except Exception as e:
+            self.pattern_summary.setText(f"Error detecting patterns: {e}")
 
-        if track.notes:
-            pitches = [n.pitch for n in track.notes]
-            lines.append(f"Pitch range: {min(pitches)} - {max(pitches)}")
-
-            durations = [n.duration_beats for n in track.notes]
-            avg_dur = sum(durations) / len(durations)
-            lines.append(f"Avg duration: {avg_dur:.2f} beats")
-
-        self.pattern_info.setText("\n".join(lines))
+    def _on_view_pattern(self, pattern_index: int) -> None:
+        """Show a specific pattern in the piano roll."""
+        if not hasattr(self, '_detected_clusters') or pattern_index >= len(self._detected_clusters):
+            return
+            
+        chunk_size, cluster = self._detected_clusters[pattern_index]
+        canonical = cluster.canonical
+        
+        if canonical and canonical.notes:
+            # Show the canonical pattern in piano roll
+            self.piano_roll.set_notes(
+                canonical.notes,
+                chunk_size,
+                self._track.primary_role.value if self._track and self._track.primary_role else "other",
+                canonical.beats_per_bar
+            )
+            # Switch to piano roll tab
+            self.tabs.setCurrentIndex(0)
 
     def _on_track_changed(self, index: int) -> None:
         """Handle track selector change."""
