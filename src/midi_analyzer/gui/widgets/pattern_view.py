@@ -49,6 +49,8 @@ class PianoRollWidget(QWidget):
         self._max_pitch: int = 84
         self._role: str = "other"
         self._beats_per_bar: float = 4.0
+        self._playback_position: float = 0.0  # Position in beats
+        self._tempo_bpm: float = 120.0
 
         self.setMinimumHeight(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -87,6 +89,20 @@ class PianoRollWidget(QWidget):
     def clear(self) -> None:
         """Clear the display."""
         self._notes = []
+        self._playback_position = 0.0
+        self.update()
+
+    def set_playback_position(self, position_seconds: float, tempo_bpm: float = 120.0) -> None:
+        """Set the playback position indicator.
+        
+        Args:
+            position_seconds: Current playback position in seconds.
+            tempo_bpm: Current tempo for beat calculation.
+        """
+        self._tempo_bpm = tempo_bpm
+        # Convert seconds to beats
+        beats_per_second = tempo_bpm / 60.0
+        self._playback_position = position_seconds * beats_per_second
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -164,6 +180,12 @@ class PianoRollWidget(QWidget):
                 y = (i + 0.5) * note_height
                 octave = pitch // 12 - 1
                 painter.drawText(4, int(y + 4), f"C{octave}")
+
+        # Draw playback cursor
+        if self._playback_position > 0 and self._playback_position < total_beats:
+            cursor_x = self._playback_position * beat_width
+            painter.setPen(QPen(QColor("#ff4444"), 2))
+            painter.drawLine(int(cursor_x), 0, int(cursor_x), height)
 
 
 class ArpVisualizerWidget(QWidget):

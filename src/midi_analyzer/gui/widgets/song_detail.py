@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -33,6 +34,7 @@ class SongDetailWidget(QWidget):
     # Signals
     track_selected = pyqtSignal(int)  # track_id
     play_track_requested = pyqtSignal(int)  # track_id
+    fetch_genres_requested = pyqtSignal()  # Request MusicBrainz lookup
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -97,6 +99,17 @@ class SongDetailWidget(QWidget):
         meta_layout.addWidget(self.path_label, row, 1)
 
         info_layout.addWidget(meta_group)
+
+        # Buttons row
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.fetch_genres_btn = QPushButton("🎵 Lookup on MusicBrainz")
+        self.fetch_genres_btn.clicked.connect(self.fetch_genres_requested.emit)
+        buttons_layout.addWidget(self.fetch_genres_btn)
+        buttons_layout.addStretch()
+        
+        info_layout.addLayout(buttons_layout)
 
         # Stats group
         stats_group = QGroupBox("Statistics")

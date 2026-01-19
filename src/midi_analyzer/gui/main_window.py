@@ -147,7 +147,7 @@ class MainWindow(QMainWindow):
         self.action_edit_metadata.triggered.connect(self._on_edit_metadata)
         edit_menu.addAction(self.action_edit_metadata)
 
-        self.action_fetch_genres = QAction("Fetch &Genres from MusicBrainz", self)
+        self.action_fetch_genres = QAction("Lookup on &MusicBrainz...", self)
         self.action_fetch_genres.setShortcut(QKeySequence("Ctrl+G"))
         self.action_fetch_genres.triggered.connect(self._on_fetch_genres)
         edit_menu.addAction(self.action_fetch_genres)
@@ -232,8 +232,10 @@ class MainWindow(QMainWindow):
         self.song_browser.song_double_clicked.connect(self._on_song_double_clicked)
         self.song_detail.track_selected.connect(self._on_track_selected)
         self.song_detail.play_track_requested.connect(self._on_play_track)
+        self.song_detail.fetch_genres_requested.connect(self._on_fetch_genres)
         self.playback_controls.play_clicked.connect(self._on_play_pause)
         self.playback_controls.stop_clicked.connect(self._on_stop)
+        self.playback_controls.position_changed.connect(self._on_playback_position_changed)
 
     def _load_library(self) -> None:
         """Load the clip library."""
@@ -420,8 +422,18 @@ class MainWindow(QMainWindow):
 
         dialog = MusicBrainzDialog(self._current_song, self._library, self)
         if dialog.exec():
+            # Refresh the browser to show updated metadata
             self.song_browser.refresh()
-            self.song_detail.refresh()
+            
+            # Re-select the current song to reload its metadata
+            if self._library and self._current_song:
+                # Get fresh clip data from the library
+                from midi_analyzer.library import ClipQuery
+                clips = self._library.query(ClipQuery(clip_id=self._current_song.clip_id))
+                if clips:
+                    self._current_song = clips[0]
+                    song = self._library.load_song(self._current_song)
+                    self.song_detail.set_song(song, self._current_song)
 
     def _on_delete_song(self) -> None:
         """Handle delete song action."""
@@ -464,6 +476,19 @@ class MainWindow(QMainWindow):
     def _on_stop(self) -> None:
         """Handle stop action."""
         self.playback_controls.stop()
+        # Reset piano roll position
+        if hasattr(self.pattern_view, 'piano_roll'):
+            self.pattern_view.piano_roll.set_playback_position(0.0)
+
+    def _on_playback_position_changed(self, position: float, tempo: float) -> None:
+        """Handle playback position updates.
+        
+        Args:
+            position: Current position in seconds.
+            tempo: Current tempo in BPM.
+        """
+        if hasattr(self.pattern_view, 'piano_roll'):
+            self.pattern_view.piano_roll.set_playback_position(position, tempo)
 
     def _on_analyze_all(self) -> None:
         """Handle analyze all songs action."""

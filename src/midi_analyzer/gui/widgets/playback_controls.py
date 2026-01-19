@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -26,6 +27,8 @@ class PlaybackControlsWidget(QWidget):
     play_clicked = pyqtSignal()
     stop_clicked = pyqtSignal()
     tempo_changed = pyqtSignal(float)
+    position_changed = pyqtSignal(float, float)  # (position_seconds, tempo_bpm)
+    _playback_finished = pyqtSignal()  # Internal signal for thread completion
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -34,6 +37,7 @@ class PlaybackControlsWidget(QWidget):
         self._track: Track | None = None
         self._playing: bool = False
         self._player = None
+        self._playback_thread: threading.Thread | None = None
 
         self._setup_ui()
         self._connect_signals()
@@ -42,6 +46,9 @@ class PlaybackControlsWidget(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_position)
         self._timer.setInterval(100)
+        
+        # Connect internal signal
+        self._playback_finished.connect(self._on_playback_finished)
 
     def _setup_ui(self) -> None:
         """Set up the UI."""
@@ -171,17 +178,36 @@ class PlaybackControlsWidget(QWidget):
 
             # Determine what to play
             if track_only and self._track:
-                self._player.play_track(self._track, options)
+                target_track = self._track
+                play_song = False
             else:
                 # Get selected track or play all
                 track_id = self.track_selector.currentData()
                 if track_id is not None:
+                    target_track = None
                     for track in self._song.tracks:
                         if track.track_id == track_id:
-                            self._player.play_track(track, options)
+                            target_track = track
                             break
+                    play_song = False
                 else:
-                    self._player.play_song(self._song, options)
+                    target_track = None
+                    play_song = True
+
+            # Start playback in a background thread
+            def play_in_thread():
+                try:
+                    if play_song:
+                        self._player.play_song(self._song, options)
+                    elif target_track:
+                        self._player.play_track(target_track, options)
+                except Exception as e:
+                    print(f"Playback thread error: {e}")
+                finally:
+                    self._playback_finished.emit()
+
+            self._playback_thread = threading.Thread(target=play_in_thread, daemon=True)
+            self._playback_thread.start()
 
             self._playing = True
             self.play_btn.setText("⏸")
@@ -191,6 +217,12 @@ class PlaybackControlsWidget(QWidget):
             print(f"Playback error: {e}")
             self._playing = False
             self.play_btn.setText("▶")
+
+    def _on_playback_finished(self) -> None:
+        """Handle playback thread completion."""
+        self._playing = False
+        self.play_btn.setText("▶")
+        self._timer.stop()
 
     def _pause_playback(self) -> None:
         """Pause playback."""
@@ -220,9 +252,27 @@ class PlaybackControlsWidget(QWidget):
 
     def _update_position(self) -> None:
         """Update position display during playback."""
-        # For now, we can't get actual position from player
-        # This would need enhancement in the player module
-        pass
+        if self._player is None or not self._playing:
+            return
+        
+        try:
+            position = self._player.position
+            duration = self._player.duration or self._get_duration()
+            
+            # Update time label
+            self._update_time_label(position, duration)
+            
+            # Update slider
+            if duration > 0:
+                slider_value = int((position / duration) * 1000)
+                slider_value = min(1000, max(0, slider_value))
+                self.position_slider.setValue(slider_value)
+            
+            # Emit position for piano roll and other displays
+            tempo = self.tempo_spinner.value()
+            self.position_changed.emit(position, float(tempo))
+        except Exception:
+            pass  # Player may be closed
 
     def _update_duration(self) -> None:
         """Update the duration display."""

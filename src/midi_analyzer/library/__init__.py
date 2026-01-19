@@ -35,6 +35,7 @@ class ClipInfo:
         duration_bars: Duration in bars.
         genres: Normalized genre tags.
         artist: Artist name.
+        title: Song title.
         tags: Additional tags.
     """
 
@@ -49,6 +50,7 @@ class ClipInfo:
     duration_bars: int
     genres: list[str] = field(default_factory=list)
     artist: str = ""
+    title: str = ""
     tags: list[str] = field(default_factory=list)
 
 
@@ -148,6 +150,7 @@ class ClipLibrary:
                 duration_bars INTEGER NOT NULL,
                 genres TEXT,
                 artist TEXT,
+                title TEXT,
                 tags TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -162,6 +165,12 @@ class ClipLibrary:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_clips_song ON clips(song_id)
         """)
+
+        # Migration: add title column if missing (for existing databases)
+        cursor.execute("PRAGMA table_info(clips)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "title" not in columns:
+            cursor.execute("ALTER TABLE clips ADD COLUMN title TEXT")
 
         self.connection.commit()
 
@@ -543,6 +552,7 @@ class ClipLibrary:
         *,
         genres: list[str] | None = None,
         artist: str | None = None,
+        title: str | None = None,
         tags: list[str] | None = None,
     ) -> bool:
         """Update metadata for a clip.
@@ -551,6 +561,7 @@ class ClipLibrary:
             clip_id: ID of clip to update.
             genres: New genres (or None to keep existing).
             artist: New artist (or None to keep existing).
+            title: New title (or None to keep existing).
             tags: New tags (or None to keep existing).
 
         Returns:
@@ -569,6 +580,10 @@ class ClipLibrary:
         if artist is not None:
             updates.append("artist = ?")
             params.append(artist)
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
 
         if tags is not None:
             updates.append("tags = ?")
@@ -600,6 +615,7 @@ class ClipLibrary:
             duration_bars=row["duration_bars"],
             genres=json.loads(row["genres"]) if row["genres"] else [],
             artist=row["artist"] or "",
+            title=row["title"] or "" if "title" in row.keys() else "",
             tags=json.loads(row["tags"]) if row["tags"] else [],
         )
 

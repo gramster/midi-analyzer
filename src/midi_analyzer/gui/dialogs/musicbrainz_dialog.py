@@ -1,4 +1,4 @@
-"""MusicBrainz lookup dialog for fetching genre information."""
+"""MusicBrainz lookup dialog for fetching metadata."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -61,16 +62,25 @@ class MusicBrainzSearchThread(QThread):
                 for recording in search_result.get("recording-list", []):
                     title = recording.get("title", "Unknown")
                     artist = ""
+                    artist_sort_name = ""
+                    disambiguation = recording.get("disambiguation", "")
+                    
                     if "artist-credit" in recording:
                         artists = recording["artist-credit"]
                         if artists:
-                            artist = artists[0].get("artist", {}).get("name", "")
+                            artist_data = artists[0].get("artist", {})
+                            artist = artist_data.get("name", "")
+                            artist_sort_name = artist_data.get("sort-name", "")
 
-                    # Get tags/genres
+                    # Get tags/genres from recording
+                    tags = []
                     genres = []
                     if "tag-list" in recording:
                         for tag in recording["tag-list"]:
-                            genres.append(tag.get("name", ""))
+                            tag_name = tag.get("name", "")
+                            tag_count = int(tag.get("count", 0))
+                            if tag_name:
+                                tags.append({"name": tag_name, "count": tag_count})
 
                     # Also try to get artist tags
                     if "artist-credit" in recording:
@@ -88,16 +98,41 @@ class MusicBrainzSearchThread(QThread):
                                         ):
                                             for tag in artist_info["artist"]["tag-list"]:
                                                 tag_name = tag.get("name", "")
-                                                if tag_name and tag_name not in genres:
-                                                    genres.append(tag_name)
+                                                tag_count = int(tag.get("count", 0))
+                                                if tag_name:
+                                                    # Check if already in tags
+                                                    existing = [t for t in tags if t["name"] == tag_name]
+                                                    if existing:
+                                                        existing[0]["count"] = max(existing[0]["count"], tag_count)
+                                                    else:
+                                                        tags.append({"name": tag_name, "count": tag_count, "from_artist": True})
                                     except Exception:
                                         pass
 
+                    # Sort tags by count (most popular first) and extract names
+                    tags.sort(key=lambda t: -t["count"])
+                    
+                    # Separate genre-like tags from descriptive tags
+                    genre_keywords = {"rock", "pop", "jazz", "electronic", "classical", "metal", 
+                                     "hip hop", "r&b", "country", "folk", "blues", "soul", "funk",
+                                     "reggae", "punk", "indie", "alternative", "dance", "house",
+                                     "techno", "trance", "ambient", "soundtrack", "world"}
+                    
+                    for tag in tags:
+                        tag_lower = tag["name"].lower()
+                        # Consider it a genre if it contains genre keywords or is short
+                        is_genre = any(kw in tag_lower for kw in genre_keywords) or len(tag["name"]) < 15
+                        if is_genre:
+                            genres.append(tag["name"])
+                        
                     results.append(
                         {
                             "title": title,
                             "artist": artist,
-                            "genres": genres[:10],  # Limit genres
+                            "artist_sort": artist_sort_name,
+                            "disambiguation": disambiguation,
+                            "genres": genres[:15],
+                            "tags": [t["name"] for t in tags[:20]],
                             "id": recording.get("id", ""),
                         }
                     )
@@ -111,16 +146,20 @@ class MusicBrainzSearchThread(QThread):
                         )
                         for artist in artist_result.get("artist-list", []):
                             artist_name = artist.get("name", "")
-                            genres = []
+                            artist_sort = artist.get("sort-name", "")
+                            tags = []
                             if "tag-list" in artist:
                                 for tag in artist["tag-list"]:
-                                    genres.append(tag.get("name", ""))
+                                    tags.append(tag.get("name", ""))
 
                             results.append(
                                 {
-                                    "title": "(Artist match)",
+                                    "title": "(Artist match only)",
                                     "artist": artist_name,
-                                    "genres": genres[:10],
+                                    "artist_sort": artist_sort,
+                                    "disambiguation": artist.get("disambiguation", ""),
+                                    "genres": tags[:15],
+                                    "tags": tags[:20],
                                     "id": artist.get("id", ""),
                                 }
                             )
@@ -136,7 +175,7 @@ class MusicBrainzSearchThread(QThread):
 
 
 class MusicBrainzDialog(QDialog):
-    """Dialog for looking up genre information from MusicBrainz."""
+    """Dialog for looking up metadata from MusicBrainz."""
 
     def __init__(
         self,
@@ -149,11 +188,11 @@ class MusicBrainzDialog(QDialog):
         self._clip = clip
         self._library = library
         self._search_thread: MusicBrainzSearchThread | None = None
-        self._selected_genres: list[str] = []
+        self._selected_result: dict | None = None
 
-        self.setWindowTitle("Fetch Genres from MusicBrainz")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
+        self.setWindowTitle("Lookup Metadata from MusicBrainz")
+        self.setMinimumWidth(650)
+        self.setMinimumHeight(600)
         self.setModal(True)
 
         self._setup_ui()
@@ -162,7 +201,7 @@ class MusicBrainzDialog(QDialog):
     def _setup_ui(self) -> None:
         """Set up the dialog UI."""
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
 
         # Search inputs
         search_group = QGroupBox("Search")
@@ -192,23 +231,67 @@ class MusicBrainzDialog(QDialog):
         layout.addWidget(self.progress)
 
         # Results
-        results_group = QGroupBox("Search Results")
+        results_group = QGroupBox("Search Results (click to select)")
         results_layout = QVBoxLayout(results_group)
 
         self.results_list = QListWidget()
+        self.results_list.setMaximumHeight(120)
         self.results_list.itemSelectionChanged.connect(self._on_result_selected)
         results_layout.addWidget(self.results_list)
 
         layout.addWidget(results_group)
 
-        # Genre selection
-        genre_group = QGroupBox("Select Genres to Apply")
-        genre_layout = QVBoxLayout(genre_group)
+        # Metadata to apply
+        apply_group = QGroupBox("Metadata to Apply")
+        apply_layout = QVBoxLayout(apply_group)
+
+        # Artist/Title updates
+        names_layout = QFormLayout()
+        
+        artist_row = QHBoxLayout()
+        self.update_artist_cb = QCheckBox()
+        self.new_artist_input = QLineEdit()
+        self.new_artist_input.setPlaceholderText("Artist name from MusicBrainz...")
+        self.new_artist_input.setEnabled(False)
+        artist_row.addWidget(self.update_artist_cb)
+        artist_row.addWidget(self.new_artist_input)
+        names_layout.addRow("Update Artist:", artist_row)
+        
+        title_row = QHBoxLayout()
+        self.update_title_cb = QCheckBox()
+        self.new_title_input = QLineEdit()
+        self.new_title_input.setPlaceholderText("Title from MusicBrainz...")
+        self.new_title_input.setEnabled(False)
+        title_row.addWidget(self.update_title_cb)
+        title_row.addWidget(self.new_title_input)
+        names_layout.addRow("Update Title:", title_row)
+        
+        apply_layout.addLayout(names_layout)
+        
+        # Connect checkboxes to enable/disable inputs
+        self.update_artist_cb.toggled.connect(self.new_artist_input.setEnabled)
+        self.update_title_cb.toggled.connect(self.new_title_input.setEnabled)
+
+        # Genre/Tag selection
+        genre_label = QLabel("Genres/Tags (select to apply):")
+        apply_layout.addWidget(genre_label)
 
         self.genre_list = QListWidget()
         self.genre_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self.genre_list.setMaximumHeight(150)
-        genre_layout.addWidget(self.genre_list)
+        apply_layout.addWidget(self.genre_list)
+
+        # Select All/None buttons for genres
+        genre_btn_layout = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(self._on_select_all_genres)
+        genre_btn_layout.addWidget(self.select_all_btn)
+        
+        self.select_none_btn = QPushButton("Select None")
+        self.select_none_btn.clicked.connect(self._on_select_no_genres)
+        genre_btn_layout.addWidget(self.select_none_btn)
+        genre_btn_layout.addStretch()
+        apply_layout.addLayout(genre_btn_layout)
 
         # Options
         options_layout = QHBoxLayout()
@@ -216,9 +299,9 @@ class MusicBrainzDialog(QDialog):
         self.replace_genres.setChecked(False)
         options_layout.addWidget(self.replace_genres)
         options_layout.addStretch()
-        genre_layout.addLayout(options_layout)
+        apply_layout.addLayout(options_layout)
 
-        layout.addWidget(genre_group)
+        layout.addWidget(apply_group)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -229,30 +312,39 @@ class MusicBrainzDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
 
-        self.apply_btn = QPushButton("Apply Selected Genres")
+        self.apply_btn = QPushButton("Apply Selected Metadata")
         self.apply_btn.clicked.connect(self._on_apply)
         self.apply_btn.setEnabled(False)
         button_layout.addWidget(self.apply_btn)
 
         layout.addLayout(button_layout)
 
+    def _on_select_all_genres(self) -> None:
+        """Select all genres in the list."""
+        self.genre_list.selectAll()
+
+    def _on_select_no_genres(self) -> None:
+        """Deselect all genres in the list."""
+        self.genre_list.clearSelection()
+
     def _load_initial_data(self) -> None:
         """Load initial data into the form."""
-        # Try to extract title and artist from filename
-        filename = Path(self._clip.source_path).stem
+        # Use MetadataExtractor to get better initial values
+        from midi_analyzer.ingest.metadata import MetadataExtractor
 
-        # Set artist from clip if available
-        self.artist_input.setText(self._clip.artist or "")
+        extractor = MetadataExtractor()
+        try:
+            import mido
+            midi_file = mido.MidiFile(self._clip.source_path)
+            metadata = extractor.extract(self._clip.source_path, midi_file)
+        except Exception:
+            metadata = extractor.extract(self._clip.source_path)
 
-        # Try to parse title from filename
-        # Common formats: "Artist - Title", "Title", etc.
-        if " - " in filename:
-            parts = filename.split(" - ", 1)
-            if not self._clip.artist:
-                self.artist_input.setText(parts[0])
-            self.title_input.setText(parts[1] if len(parts) > 1 else parts[0])
-        else:
-            self.title_input.setText(filename)
+        # Set artist - prefer clip's stored artist, then extracted
+        self.artist_input.setText(self._clip.artist or metadata.artist or "")
+
+        # Set title - prefer extracted title
+        self.title_input.setText(metadata.title or Path(self._clip.source_path).stem)
 
     def _on_search(self) -> None:
         """Start MusicBrainz search."""
@@ -266,7 +358,12 @@ class MusicBrainzDialog(QDialog):
         # Clear previous results
         self.results_list.clear()
         self.genre_list.clear()
+        self.new_artist_input.clear()
+        self.new_title_input.clear()
+        self.update_artist_cb.setChecked(False)
+        self.update_title_cb.setChecked(False)
         self.apply_btn.setEnabled(False)
+        self._selected_result = None
 
         # Show progress
         self.progress.setVisible(True)
@@ -289,8 +386,10 @@ class MusicBrainzDialog(QDialog):
 
         for result in results:
             text = f"{result['artist']} - {result['title']}"
+            if result.get("disambiguation"):
+                text += f" ({result['disambiguation']})"
             if result["genres"]:
-                text += f" [{', '.join(result['genres'][:5])}]"
+                text += f" [{', '.join(result['genres'][:3])}...]"
 
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, result)
@@ -316,59 +415,129 @@ class MusicBrainzDialog(QDialog):
         if result is None:
             return
 
-        # Populate genre list
-        self.genre_list.clear()
-        for genre in result.get("genres", []):
-            item = QListWidgetItem(genre)
-            item.setSelected(True)  # Select all by default
-            self.genre_list.addItem(item)
+        self._selected_result = result
 
-        self.apply_btn.setEnabled(self.genre_list.count() > 0)
+        # Populate artist/title fields
+        mb_artist = result.get("artist", "")
+        mb_title = result.get("title", "")
+        
+        self.new_artist_input.setText(mb_artist)
+        self.new_title_input.setText(mb_title)
+        
+        # Auto-check if different from current
+        current_artist = self._clip.artist or ""
+        if mb_artist and mb_artist.lower() != current_artist.lower():
+            self.update_artist_cb.setChecked(True)
+        else:
+            self.update_artist_cb.setChecked(False)
+            
+        if mb_title and mb_title != "(Artist match only)":
+            self.update_title_cb.setChecked(True)
+        else:
+            self.update_title_cb.setChecked(False)
+
+        # Populate genre/tag list - combine genres and tags, removing duplicates
+        self.genre_list.clear()
+        seen = set()
+        
+        # Add genres first (they're more likely to be relevant)
+        for genre in result.get("genres", []):
+            if genre.lower() not in seen:
+                seen.add(genre.lower())
+                item = QListWidgetItem(genre)
+                item.setSelected(True)  # Select genres by default
+                self.genre_list.addItem(item)
+        
+        # Add other tags (not selected by default)
+        for tag in result.get("tags", []):
+            if tag.lower() not in seen:
+                seen.add(tag.lower())
+                item = QListWidgetItem(tag)
+                item.setSelected(False)
+                self.genre_list.addItem(item)
+
+        self.apply_btn.setEnabled(True)
 
     def _on_apply(self) -> None:
-        """Apply selected genres."""
+        """Apply selected metadata."""
         if self._library is None:
             QMessageBox.warning(self, "Error", "No library connected.")
             return
 
-        # Get selected genres
+        # Gather what to update
+        new_artist = None
+        new_title = None
         selected_genres = []
+        
+        if self.update_artist_cb.isChecked():
+            new_artist = self.new_artist_input.text().strip()
+            if not new_artist:
+                QMessageBox.warning(self, "Invalid", "Artist name cannot be empty.")
+                return
+                
+        if self.update_title_cb.isChecked():
+            new_title = self.new_title_input.text().strip()
+            if not new_title or new_title == "(Artist match only)":
+                QMessageBox.warning(self, "Invalid", "Title cannot be empty.")
+                return
+        
+        # Get selected genres/tags
         for i in range(self.genre_list.count()):
             item = self.genre_list.item(i)
             if item.isSelected():
                 selected_genres.append(item.text())
 
-        if not selected_genres:
-            QMessageBox.warning(self, "No Selection", "Please select at least one genre.")
+        # Check if anything to apply
+        if not new_artist and not new_title and not selected_genres:
+            QMessageBox.warning(self, "No Selection", "Please select at least one field to update.")
             return
 
         try:
-            # Get existing genres if not replacing
-            if not self.replace_genres.isChecked():
-                existing = list(self._clip.genres)
-                for genre in selected_genres:
-                    if genre.lower() not in [g.lower() for g in existing]:
-                        existing.append(genre)
-                selected_genres = existing
+            # Handle genres - merge or replace
+            if selected_genres:
+                if not self.replace_genres.isChecked():
+                    existing = list(self._clip.genres)
+                    for genre in selected_genres:
+                        if genre.lower() not in [g.lower() for g in existing]:
+                            existing.append(genre)
+                    selected_genres = existing
 
             # Update all clips from the same song
             from midi_analyzer.library import ClipQuery
 
             song_clips = self._library.query(ClipQuery(limit=1000))
+            updated_count = 0
             for clip in song_clips:
                 if clip.song_id == self._clip.song_id:
-                    self._library.update_metadata(
-                        clip.clip_id,
-                        genres=selected_genres,
-                    )
+                    update_kwargs = {}
+                    if new_artist:
+                        update_kwargs["artist"] = new_artist
+                    if new_title:
+                        update_kwargs["title"] = new_title
+                    if selected_genres:
+                        update_kwargs["genres"] = selected_genres
+                    
+                    if update_kwargs:
+                        self._library.update_metadata(clip.clip_id, **update_kwargs)
+                        updated_count += 1
 
+            # Build success message
+            changes = []
+            if new_artist:
+                changes.append(f"artist to '{new_artist}'")
+            if new_title:
+                changes.append(f"title to '{new_title}'")
+            if selected_genres:
+                changes.append(f"{len(selected_genres)} genres")
+            
             QMessageBox.information(
-                self, "Success", f"Applied {len(selected_genres)} genres to the song."
+                self, "Success", 
+                f"Updated {', '.join(changes)} for {updated_count} clip(s)."
             )
             self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to apply genres: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to apply metadata: {e}")
 
     def closeEvent(self, event) -> None:
         """Handle dialog close."""

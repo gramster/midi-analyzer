@@ -138,8 +138,31 @@ def get_instrument_name(program: int) -> str:
     return f"Program {program}"
 
 
+# Default soundfont locations to search
+SOUNDFONT_PATHS = [
+    "/opt/homebrew/Cellar/fluid-synth/2.5.2/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2",
+    "/opt/homebrew/share/soundfonts/default.sf2",
+    "/usr/share/soundfonts/default.sf2",
+    "/usr/share/sounds/sf2/FluidR3_GM.sf2",
+    "/usr/share/sounds/sf2/TimGM6mb.sf2",
+]
+
+
+def find_soundfont() -> str | None:
+    """Find an available soundfont file.
+    
+    Returns:
+        Path to soundfont file, or None if not found.
+    """
+    import os
+    for path in SOUNDFONT_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 class MidiPlayer:
-    """MIDI player using pygame.
+    """MIDI player using FluidSynth for General MIDI playback.
 
     Example:
         player = MidiPlayer()
@@ -148,54 +171,70 @@ class MidiPlayer:
         player.close()
     """
 
-    def __init__(self) -> None:
-        """Initialize the MIDI player."""
+    def __init__(self, soundfont: str | None = None) -> None:
+        """Initialize the MIDI player.
+        
+        Args:
+            soundfont: Path to soundfont file. If None, searches common locations.
+        """
         self._initialized = False
-        self._midi_out = None
+        self._synth = None
+        self._sfid = None
         self._playing = False
+        self._soundfont = soundfont
+        # Position tracking
+        self._playback_start_time: float = 0.0
+        self._playback_duration: float = 0.0
+        self._current_position: float = 0.0
 
     def _ensure_init(self) -> None:
-        """Ensure pygame.midi is initialized."""
+        """Ensure FluidSynth is initialized."""
         if self._initialized:
             return
 
         try:
-            import pygame
-            import pygame.midi
+            import fluidsynth
         except ImportError as e:
             raise RuntimeError(
-                "pygame is required for MIDI playback. Install with: pip install pygame"
+                "pyfluidsynth is required for MIDI playback. "
+                "Install with: pip install pyfluidsynth\n"
+                "Also ensure FluidSynth is installed: brew install fluid-synth"
             ) from e
 
-        pygame.init()
-        pygame.midi.init()
+        # Find soundfont
+        sf_path = self._soundfont or find_soundfont()
+        if sf_path is None:
+            raise RuntimeError(
+                "No soundfont found. Install one or specify path.\n"
+                "On macOS: brew install fluid-synth (includes a soundfont)"
+            )
 
-        # Find default output device
-        device_id = pygame.midi.get_default_output_id()
-        if device_id == -1:
-            # Try to find any output device
-            for i in range(pygame.midi.get_count()):
-                info = pygame.midi.get_device_info(i)
-                if info[3] == 1:  # Is output
-                    device_id = i
-                    break
-
-        if device_id == -1:
-            raise RuntimeError("No MIDI output device found")
-
-        self._midi_out = pygame.midi.Output(device_id)
+        # Initialize synthesizer
+        self._synth = fluidsynth.Synth()
+        self._synth.start(driver="coreaudio")
+        
+        # Load soundfont
+        self._sfid = self._synth.sfload(sf_path)
+        if self._sfid == -1:
+            raise RuntimeError(f"Failed to load soundfont: {sf_path}")
+        
+        # Set up all channels with default instruments
+        for channel in range(16):
+            if channel == 9:
+                # Drums on channel 10 (0-indexed: 9)
+                self._synth.program_select(channel, self._sfid, 128, 0)
+            else:
+                self._synth.program_select(channel, self._sfid, 0, 0)
+        
         self._initialized = True
 
     def close(self) -> None:
         """Close the MIDI player and release resources."""
-        if self._midi_out:
-            self._midi_out.close()
-            self._midi_out = None
-
-        if self._initialized:
-            import pygame.midi
-            pygame.midi.quit()
-            self._initialized = False
+        if self._synth:
+            self._synth.delete()
+            self._synth = None
+        self._sfid = None
+        self._initialized = False
 
     def __enter__(self) -> MidiPlayer:
         """Context manager entry."""
@@ -208,10 +247,28 @@ class MidiPlayer:
     def stop(self) -> None:
         """Stop current playback."""
         self._playing = False
-        if self._midi_out:
+        self._current_position = 0.0
+        if self._synth:
             # All notes off on all channels
             for channel in range(16):
-                self._midi_out.write_short(0xB0 | channel, 123, 0)
+                self._synth.cc(channel, 123, 0)  # All notes off
+
+    @property
+    def is_playing(self) -> bool:
+        """Return whether playback is in progress."""
+        return self._playing
+
+    @property
+    def position(self) -> float:
+        """Return current playback position in seconds."""
+        if self._playing:
+            return time.time() - self._playback_start_time
+        return self._current_position
+
+    @property
+    def duration(self) -> float:
+        """Return total playback duration in seconds."""
+        return self._playback_duration
 
     def set_instrument(self, channel: int, program: int) -> None:
         """Set the instrument for a channel.
@@ -221,8 +278,22 @@ class MidiPlayer:
             program: GM program number (0-127).
         """
         self._ensure_init()
-        if self._midi_out:
-            self._midi_out.set_instrument(program, channel)
+        if self._synth and self._sfid is not None:
+            # For drums (channel 9), use bank 128
+            if channel == 9:
+                self._synth.program_select(channel, self._sfid, 128, program)
+            else:
+                self._synth.program_select(channel, self._sfid, 0, program)
+
+    def _note_on(self, pitch: int, velocity: int, channel: int) -> None:
+        """Send a note-on message."""
+        if self._synth:
+            self._synth.noteon(channel, pitch, velocity)
+
+    def _note_off(self, pitch: int, channel: int) -> None:
+        """Send a note-off message."""
+        if self._synth:
+            self._synth.noteoff(channel, pitch)
 
     def play_track(
         self,
@@ -236,7 +307,7 @@ class MidiPlayer:
             options: Playback options.
         """
         self._ensure_init()
-        if not self._midi_out:
+        if not self._synth:
             return
 
         options = options or PlaybackOptions()
@@ -259,7 +330,7 @@ class MidiPlayer:
                 program = get_instrument_for_role(role)
             else:
                 program = 0
-            self._midi_out.set_instrument(program, channel)
+            self.set_instrument(channel, program)
 
         # Calculate timing
         seconds_per_beat = 60.0 / options.tempo_bpm
@@ -271,6 +342,11 @@ class MidiPlayer:
 
         # Normalize start if needed
         start_offset = notes[0].start_beat
+        
+        # Calculate and store duration
+        max_end_beat = max(n.start_beat + n.duration_beats for n in notes) - start_offset
+        self._playback_duration = max_end_beat * seconds_per_beat
+        self._playback_start_time = time.time()
 
         while self._playing:
             current_time = 0.0
@@ -300,7 +376,7 @@ class MidiPlayer:
                 velocity = max(1, min(127, velocity))
 
                 # Note on
-                self._midi_out.note_on(pitch, velocity, channel)
+                self._note_on(pitch, velocity, channel)
                 active_notes.append((note_end, pitch))
 
             # Wait for remaining notes to finish
@@ -308,12 +384,12 @@ class MidiPlayer:
                 max_end = max(end for end, _ in active_notes)
                 remaining = max_end - current_time
                 if remaining > 0:
-                    self._process_note_offs(active_notes, current_time, remaining)
+                    self._process_note_offs(active_notes, current_time, remaining, channel)
                     time.sleep(remaining)
 
             # Turn off any remaining notes
             for _, pitch in active_notes:
-                self._midi_out.note_off(pitch, 0, channel)
+                self._note_off(pitch, channel)
 
             if not options.loop:
                 break
@@ -325,9 +401,10 @@ class MidiPlayer:
         active_notes: list[tuple[float, int]],
         current_time: float,
         wait_duration: float,
+        channel: int = 0,
     ) -> None:
         """Process note-off events during a wait period."""
-        if not self._midi_out:
+        if not self._synth:
             return
 
         end_time = current_time + wait_duration
@@ -348,7 +425,7 @@ class MidiPlayer:
                 elapsed += wait
 
             # Note off
-            self._midi_out.note_off(pitch, 0, 0)  # Channel 0 for now
+            self._note_off(pitch, channel)
             active_notes.pop(0)
 
     def play_song(
@@ -356,18 +433,17 @@ class MidiPlayer:
         song: Song,
         options: PlaybackOptions | None = None,
     ) -> None:
-        """Play a complete song.
+        """Play a complete song with all tracks simultaneously.
 
         Args:
             song: Song to play.
             options: Playback options.
         """
         self._ensure_init()
-        if not self._midi_out:
+        if not self._synth:
             return
 
         options = options or PlaybackOptions()
-        tempo = options.tempo_bpm or song.primary_tempo
 
         # Use song's tempo if not overridden
         if options.tempo_bpm == 120.0 and song.primary_tempo != 120.0:
@@ -380,13 +456,111 @@ class MidiPlayer:
                 instrument=options.instrument,
             )
 
-        # For now, play tracks sequentially
-        # TODO: Implement multi-track playback
+        self._playing = True
+        seconds_per_beat = 60.0 / options.tempo_bpm
+
+        # Assign channels and set instruments for each track
+        track_channels: dict[int, int] = {}
+        next_channel = 0
+        
         for track in song.tracks:
-            if not self._playing:
+            if not track.notes:
+                continue
+                
+            role = classify_track_role(track)
+            is_drums = role == TrackRole.DRUMS or track.channel == 9
+            
+            if is_drums:
+                channel = 9
+            else:
+                channel = next_channel
+                if next_channel == 9:
+                    next_channel = 10  # Skip drum channel
+                else:
+                    next_channel += 1
+                if next_channel > 15:
+                    next_channel = 0  # Wrap around (reuse channels if needed)
+            
+            track_channels[track.track_id] = channel
+            
+            # Set instrument
+            if not is_drums:
+                if options.instrument is not None:
+                    program = options.instrument
+                elif options.use_role_instrument:
+                    program = get_instrument_for_role(role)
+                else:
+                    program = 0
+                self.set_instrument(channel, program)
+
+        # Collect all notes from all tracks with their timing and channel
+        all_events: list[tuple[float, str, int, int, int, int]] = []  # (time, type, pitch, velocity, channel, track_id)
+        
+        min_start = float('inf')
+        for track in song.tracks:
+            if not track.notes or track.track_id not in track_channels:
+                continue
+            channel = track_channels[track.track_id]
+            for note in track.notes:
+                start_time = note.start_beat * seconds_per_beat
+                end_time = (note.start_beat + note.duration_beats) * seconds_per_beat
+                
+                pitch = note.pitch + options.transpose
+                pitch = max(0, min(127, pitch))
+                
+                velocity = int(note.velocity * options.velocity_scale)
+                velocity = max(1, min(127, velocity))
+                
+                all_events.append((start_time, 'on', pitch, velocity, channel, track.track_id))
+                all_events.append((end_time, 'off', pitch, 0, channel, track.track_id))
+                
+                if start_time < min_start:
+                    min_start = start_time
+
+        if not all_events:
+            return
+
+        # Normalize times (start from 0)
+        if min_start > 0:
+            all_events = [(t - min_start, typ, p, v, c, tid) for t, typ, p, v, c, tid in all_events]
+
+        # Sort by time, with note-offs before note-ons at same time
+        all_events.sort(key=lambda e: (e[0], 0 if e[1] == 'off' else 1))
+
+        # Calculate and store duration
+        self._playback_duration = max(e[0] for e in all_events) if all_events else 0.0
+        self._playback_start_time = time.time()
+
+        # Play all events
+        current_time = 0.0
+        
+        while self._playing:
+            for event_time, event_type, pitch, velocity, channel, _ in all_events:
+                if not self._playing:
+                    break
+                
+                # Wait until this event
+                wait_time = event_time - current_time
+                if wait_time > 0:
+                    time.sleep(wait_time)
+                    current_time = event_time
+                
+                if event_type == 'on':
+                    self._note_on(pitch, velocity, channel)
+                else:
+                    self._note_off(pitch, channel)
+            
+            if not options.loop:
                 break
-            if track.notes:
-                self.play_track(track, options)
+            
+            # Reset for loop
+            current_time = 0.0
+            # Turn off all notes before looping
+            for channel in range(16):
+                if self._synth:
+                    self._synth.cc(channel, 123, 0)
+
+        self._playing = False
 
 
 def play_track(
@@ -419,23 +593,15 @@ def list_midi_devices() -> list[tuple[int, str, bool]]:
     Returns:
         List of (device_id, name, is_output) tuples.
     """
-    try:
-        import pygame
-        import pygame.midi
-    except ImportError:
-        return []
-
-    pygame.init()
-    pygame.midi.init()
-
+    # With FluidSynth, we use built-in synthesis, so no external MIDI devices needed
+    # But we can still list available audio drivers
     devices = []
-    for i in range(pygame.midi.get_count()):
-        info = pygame.midi.get_device_info(i)
-        name = info[1].decode() if isinstance(info[1], bytes) else str(info[1])
-        is_output = bool(info[3])
-        devices.append((i, name, is_output))
-
-    pygame.midi.quit()
+    try:
+        import fluidsynth
+        # FluidSynth uses audio drivers, not MIDI devices
+        devices.append((0, "FluidSynth (coreaudio)", True))
+    except ImportError:
+        pass
     return devices
 
 
@@ -444,6 +610,8 @@ __all__ = [
     "PlaybackOptions",
     "ROLE_INSTRUMENT_ALTERNATIVES",
     "ROLE_INSTRUMENTS",
+    "SOUNDFONT_PATHS",
+    "find_soundfont",
     "get_instrument_for_role",
     "get_instrument_name",
     "list_midi_devices",
