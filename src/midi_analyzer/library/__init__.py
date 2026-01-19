@@ -192,6 +192,7 @@ class ClipLibrary:
         *,
         genres: list[str] | None = None,
         artist: str = "",
+        title: str = "",
         tags: list[str] | None = None,
     ) -> list[ClipInfo]:
         """Index a single MIDI file.
@@ -200,6 +201,7 @@ class ClipLibrary:
             file_path: Path to the MIDI file.
             genres: Genre tags for all tracks.
             artist: Artist name.
+            title: Song title.
             tags: Additional tags.
 
         Returns:
@@ -209,10 +211,12 @@ class ClipLibrary:
         song = parse_midi_file(file_path)
 
         # Extract metadata from filename/path if not provided
+        extractor = MetadataExtractor()
+        metadata = extractor.extract(file_path)
         if not artist:
-            extractor = MetadataExtractor()
-            metadata = extractor.extract(file_path)
             artist = metadata.artist or ""
+        if not title:
+            title = metadata.title or ""
 
         # Normalize genres
         normalized_genres = []
@@ -250,6 +254,7 @@ class ClipLibrary:
                 duration_bars=song.total_bars,
                 genres=normalized_genres,
                 artist=artist,
+                title=title,
                 tags=tags or [],
             )
 
@@ -257,8 +262,8 @@ class ClipLibrary:
             cursor.execute(
                 """INSERT OR REPLACE INTO clips
                    (clip_id, song_id, track_id, source_path, track_name,
-                    role, channel, note_count, duration_bars, genres, artist, tags)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    role, channel, note_count, duration_bars, genres, artist, title, tags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     clip.clip_id,
                     clip.song_id,
@@ -271,6 +276,7 @@ class ClipLibrary:
                     clip.duration_bars,
                     json.dumps(clip.genres),
                     clip.artist,
+                    clip.title,
                     json.dumps(clip.tags),
                 ),
             )

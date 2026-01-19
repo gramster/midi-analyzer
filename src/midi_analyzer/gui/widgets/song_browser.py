@@ -228,7 +228,9 @@ class SongBrowserWidget(QWidget):
         self.model.removeRows(0, self.model.rowCount())
 
         for clip in self._clips:
-            name_item = QStandardItem(Path(clip.source_path).stem)
+            # Use title if available, otherwise fall back to filename
+            display_name = clip.title if clip.title else Path(clip.source_path).stem
+            name_item = QStandardItem(display_name)
             name_item.setData(clip, Qt.ItemDataRole.UserRole)
 
             artist_item = QStandardItem(clip.artist or "Unknown")
