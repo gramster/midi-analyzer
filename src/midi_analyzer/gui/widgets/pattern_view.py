@@ -547,7 +547,7 @@ class PatternViewWidget(QWidget):
                     continue
                     
                 # Generate fingerprints
-                fingerprints = [fingerprinter.combined_fingerprint(c) for c in chunks]
+                fingerprints = [fingerprinter.fingerprint(c) for c in chunks]
                 
                 # Deduplicate
                 result = deduplicate_track(chunks, fingerprints)

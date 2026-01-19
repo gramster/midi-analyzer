@@ -111,11 +111,14 @@ class SongDetailWidget(QWidget):
         
         info_layout.addLayout(buttons_layout)
 
-        # Stats group
+        # Stats group - two columns
         stats_group = QGroupBox("Statistics")
         stats_layout = QGridLayout(stats_group)
         stats_layout.setColumnStretch(1, 1)
+        stats_layout.setColumnStretch(3, 1)
+        stats_layout.setHorizontalSpacing(20)
 
+        # Left column
         row = 0
         stats_layout.addWidget(QLabel("Tempo:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.tempo_label = QLabel("-")
@@ -131,27 +134,21 @@ class SongDetailWidget(QWidget):
         self.bars_label = QLabel("-")
         stats_layout.addWidget(self.bars_label, row, 1)
 
-        row += 1
-        stats_layout.addWidget(QLabel("Tracks:"), row, 0, Qt.AlignmentFlag.AlignRight)
+        # Right column
+        row = 0
+        stats_layout.addWidget(QLabel("Tracks:"), row, 2, Qt.AlignmentFlag.AlignRight)
         self.tracks_label = QLabel("-")
-        stats_layout.addWidget(self.tracks_label, row, 1)
+        stats_layout.addWidget(self.tracks_label, row, 3)
 
         row += 1
-        stats_layout.addWidget(QLabel("Total Notes:"), row, 0, Qt.AlignmentFlag.AlignRight)
+        stats_layout.addWidget(QLabel("Total Notes:"), row, 2, Qt.AlignmentFlag.AlignRight)
         self.notes_label = QLabel("-")
-        stats_layout.addWidget(self.notes_label, row, 1)
+        stats_layout.addWidget(self.notes_label, row, 3)
 
         row += 1
-        stats_layout.addWidget(QLabel("Key:"), row, 0, Qt.AlignmentFlag.AlignRight)
+        stats_layout.addWidget(QLabel("Key:"), row, 2, Qt.AlignmentFlag.AlignRight)
         self.key_label = QLabel("-")
-        stats_layout.addWidget(self.key_label, row, 1)
-
-        row += 1
-        stats_layout.addWidget(QLabel("Chords:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-        self.chords_label = QLabel("-")
-        self.chords_label.setWordWrap(True)
-        self.chords_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        stats_layout.addWidget(self.chords_label, row, 1)
+        stats_layout.addWidget(self.key_label, row, 3)
 
         info_layout.addWidget(stats_group)
         info_layout.addStretch()
@@ -241,7 +238,6 @@ class SongDetailWidget(QWidget):
         self.tracks_label.setText("-")
         self.notes_label.setText("-")
         self.key_label.setText("-")
-        self.chords_label.setText("-")
 
         self.track_table.setRowCount(0)
         self.sections_text.clear()
@@ -293,9 +289,8 @@ class SongDetailWidget(QWidget):
         self._update_harmony(song)
 
     def _update_harmony(self, song: Song) -> None:
-        """Update key and chord progression display."""
+        """Update key detection display."""
         try:
-            from midi_analyzer.harmony.chords import detect_chord_progression_for_song
             from midi_analyzer.harmony.keys import detect_key
 
             # Collect all non-drum notes for analysis
@@ -308,7 +303,6 @@ class SongDetailWidget(QWidget):
 
             if not all_notes:
                 self.key_label.setText("Unknown")
-                self.chords_label.setText("-")
                 return
 
             # Detect key
@@ -319,42 +313,8 @@ class SongDetailWidget(QWidget):
             else:
                 self.key_label.setText("Unknown")
 
-            # Detect chord progression
-            progression = detect_chord_progression_for_song(song)
-            
-            if progression.chords:
-                # Get simplified chord names (no consecutive duplicates)
-                simplified = progression.simplify()
-                
-                # Also get Roman numerals if we have a key
-                if progression.key:
-                    roman = progression.to_roman_numerals()
-                    # Remove consecutive duplicates from roman numerals too
-                    unique_roman = []
-                    for r in roman:
-                        if not unique_roman or r != unique_roman[-1]:
-                            unique_roman.append(r)
-                    
-                    # Show both: chord names and roman numerals
-                    chord_str = " → ".join(simplified[:12])  # Limit display
-                    if len(simplified) > 12:
-                        chord_str += " ..."
-                    roman_str = " → ".join(unique_roman[:12])
-                    if len(unique_roman) > 12:
-                        roman_str += " ..."
-                    
-                    self.chords_label.setText(f"{chord_str}\n({roman_str})")
-                else:
-                    chord_str = " → ".join(simplified[:12])
-                    if len(simplified) > 12:
-                        chord_str += " ..."
-                    self.chords_label.setText(chord_str)
-            else:
-                self.chords_label.setText("No chords detected")
-
         except Exception as e:
             self.key_label.setText("Error")
-            self.chords_label.setText(f"Error: {e}")
 
     def _update_tracks(self) -> None:
         """Update the tracks table."""
@@ -421,8 +381,20 @@ class SongDetailWidget(QWidget):
 
         try:
             from midi_analyzer.analysis.sections import analyze_sections
+            from midi_analyzer.harmony.chords import detect_chord_progression
+            from midi_analyzer.harmony.keys import detect_key
 
             sections_result = analyze_sections(self._song)
+
+            # Collect all non-drum notes for chord analysis
+            all_notes = []
+            for track in self._song.tracks:
+                if track.channel != 9:  # Skip drum channel
+                    all_notes.extend(track.notes)
+            all_notes.sort(key=lambda n: n.start_beat)
+            
+            # Detect key for Roman numeral display
+            key = detect_key(all_notes) if all_notes else None
 
             lines = []
             lines.append(f"Total Sections: {len(sections_result.sections)}")
@@ -436,8 +408,51 @@ class SongDetailWidget(QWidget):
                 lines.append(
                     f"[{section.form_label}]{type_str}: Bars {section.start_bar + 1}-{section.end_bar}"
                 )
+                
+                # Get chord progression for this section
+                if all_notes:
+                    # Get beats per bar (assume 4 if not specified)
+                    beats_per_bar = 4.0
+                    if self._song.time_sig_map:
+                        beats_per_bar = self._song.time_sig_map[0].beats_per_bar
+                    
+                    start_beat = section.start_bar * beats_per_bar
+                    end_beat = section.end_bar * beats_per_bar
+                    
+                    # Filter notes in this section
+                    section_notes = [
+                        n for n in all_notes 
+                        if start_beat <= n.start_beat < end_beat
+                    ]
+                    
+                    if section_notes:
+                        progression = detect_chord_progression(section_notes, window_beats=2.0)
+                        if progression.chords:
+                            simplified = progression.simplify()
+                            chord_str = " → ".join(simplified[:8])
+                            if len(simplified) > 8:
+                                chord_str += " ..."
+                            
+                            if key:
+                                # Get Roman numerals
+                                roman = progression.to_roman_numerals()
+                                unique_roman = []
+                                for r in roman:
+                                    if not unique_roman or r != unique_roman[-1]:
+                                        unique_roman.append(r)
+                                roman_str = " → ".join(unique_roman[:8])
+                                if len(unique_roman) > 8:
+                                    roman_str += " ..."
+                                lines.append(f"    Chords: {chord_str}")
+                                lines.append(f"    ({roman_str})")
+                            else:
+                                lines.append(f"    Chords: {chord_str}")
+                
+                lines.append("")
 
             self.sections_text.setPlainText("\n".join(lines))
+        except Exception as e:
+            self.sections_text.setPlainText(f"Error analyzing sections: {e}")
         except Exception as e:
             self.sections_text.setPlainText(f"Error analyzing sections: {e}")
 
