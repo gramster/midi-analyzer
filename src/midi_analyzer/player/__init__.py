@@ -312,6 +312,7 @@ class MidiPlayer:
 
         options = options or PlaybackOptions()
         self._playing = True
+        self._playback_start_time = time.time()  # Set immediately to avoid huge position values
 
         # Determine channel and instrument
         role_probs = classify_track_role(track)
@@ -458,6 +459,7 @@ class MidiPlayer:
             )
 
         self._playing = True
+        self._playback_start_time = time.time()  # Set immediately to avoid huge position values
         seconds_per_beat = 60.0 / options.tempo_bpm
 
         # Assign channels and set instruments for each track
