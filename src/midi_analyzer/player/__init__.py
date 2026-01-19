@@ -314,7 +314,8 @@ class MidiPlayer:
         self._playing = True
 
         # Determine channel and instrument
-        role = classify_track_role(track)
+        role_probs = classify_track_role(track)
+        role = role_probs.primary_role()
         is_drums = role == TrackRole.DRUMS or track.channel == 9
 
         if is_drums:
@@ -467,7 +468,8 @@ class MidiPlayer:
             if not track.notes:
                 continue
                 
-            role = classify_track_role(track)
+            role_probs = classify_track_role(track)
+            role = role_probs.primary_role()
             is_drums = role == TrackRole.DRUMS or track.channel == 9
             
             if is_drums:
