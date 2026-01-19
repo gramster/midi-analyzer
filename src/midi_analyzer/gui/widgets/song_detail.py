@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHeaderView,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -63,49 +64,69 @@ class SongDetailWidget(QWidget):
 
         # Metadata group
         meta_group = QGroupBox("Metadata")
-        meta_layout = QFormLayout(meta_group)
-        meta_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        meta_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        meta_layout = QGridLayout(meta_group)
+        meta_layout.setColumnStretch(1, 1)  # Value column expands
 
+        row = 0
+        meta_layout.addWidget(QLabel("Name:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.name_label = QLabel("-")
         self.name_label.setWordWrap(True)
-        self.name_label.setMinimumWidth(200)
-        meta_layout.addRow("Name:", self.name_label)
+        self.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        meta_layout.addWidget(self.name_label, row, 1)
 
+        row += 1
+        meta_layout.addWidget(QLabel("Artist:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.artist_label = QLabel("-")
-        meta_layout.addRow("Artist:", self.artist_label)
+        self.artist_label.setWordWrap(True)
+        self.artist_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        meta_layout.addWidget(self.artist_label, row, 1)
 
+        row += 1
+        meta_layout.addWidget(QLabel("Genres:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.genres_label = QLabel("-")
         self.genres_label.setWordWrap(True)
-        meta_layout.addRow("Genres:", self.genres_label)
+        self.genres_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        meta_layout.addWidget(self.genres_label, row, 1)
 
+        row += 1
+        meta_layout.addWidget(QLabel("Path:"), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self.path_label = QLabel("-")
         self.path_label.setWordWrap(True)
-        self.path_label.setMinimumWidth(200)
+        self.path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        meta_layout.addRow("Path:", self.path_label)
+        meta_layout.addWidget(self.path_label, row, 1)
 
         info_layout.addWidget(meta_group)
 
         # Stats group
         stats_group = QGroupBox("Statistics")
-        stats_layout = QFormLayout(stats_group)
-        stats_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        stats_layout = QGridLayout(stats_group)
+        stats_layout.setColumnStretch(1, 1)
 
+        row = 0
+        stats_layout.addWidget(QLabel("Tempo:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.tempo_label = QLabel("-")
-        stats_layout.addRow("Tempo:", self.tempo_label)
+        stats_layout.addWidget(self.tempo_label, row, 1)
 
+        row += 1
+        stats_layout.addWidget(QLabel("Time Sig:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.time_sig_label = QLabel("-")
-        stats_layout.addRow("Time Sig:", self.time_sig_label)
+        stats_layout.addWidget(self.time_sig_label, row, 1)
 
+        row += 1
+        stats_layout.addWidget(QLabel("Bars:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.bars_label = QLabel("-")
-        stats_layout.addRow("Bars:", self.bars_label)
+        stats_layout.addWidget(self.bars_label, row, 1)
 
+        row += 1
+        stats_layout.addWidget(QLabel("Tracks:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.tracks_label = QLabel("-")
-        stats_layout.addRow("Tracks:", self.tracks_label)
+        stats_layout.addWidget(self.tracks_label, row, 1)
 
+        row += 1
+        stats_layout.addWidget(QLabel("Total Notes:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.notes_label = QLabel("-")
-        stats_layout.addRow("Total Notes:", self.notes_label)
+        stats_layout.addWidget(self.notes_label, row, 1)
 
         info_layout.addWidget(stats_group)
         info_layout.addStretch()

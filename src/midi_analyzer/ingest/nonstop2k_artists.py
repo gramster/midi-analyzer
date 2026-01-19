@@ -4481,7 +4481,7 @@ NONSTOP2K_ARTISTS: dict[str, str] = {
     "william": "Will.i.am",
     "william-black": "William Black",
     "william-hawk": "William Hawk",
-    "william-rbit": "William Ørbit",
+    "william-orbit": "William Orbit",
     "williams-syndrome": "Williams Syndrome",
     "willy-beaman": "Willy Beaman",
     "willy-william": "Willy William",

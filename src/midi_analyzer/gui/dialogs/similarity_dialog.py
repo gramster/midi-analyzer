@@ -422,7 +422,7 @@ class SimilarityDialog(QDialog):
             if track:
                 player = MidiPlayer()
                 options = PlaybackOptions(tempo_bpm=120, use_role_instrument=True)
-                player.play_track(track, song, options=options, blocking=False)
+                player.play_track(track, options)
 
         except Exception as e:
             QMessageBox.warning(self, "Playback Error", f"Could not play track: {e}")

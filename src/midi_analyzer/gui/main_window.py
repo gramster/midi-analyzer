@@ -189,9 +189,9 @@ class MainWindow(QMainWindow):
         # Analysis menu
         analysis_menu = menubar.addMenu("&Analysis")
 
-        self.action_analyze = QAction("&Analyze Song", self)
-        self.action_analyze.setShortcut(QKeySequence("Ctrl+A"))
-        self.action_analyze.triggered.connect(self._on_analyze_song)
+        self.action_analyze = QAction("Analyze &All", self)
+        self.action_analyze.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self.action_analyze.triggered.connect(self._on_analyze_all)
         analysis_menu.addAction(self.action_analyze)
 
         self.action_find_similar = QAction("Find &Similar Patterns...", self)
@@ -465,18 +465,40 @@ class MainWindow(QMainWindow):
         """Handle stop action."""
         self.playback_controls.stop()
 
-    def _on_analyze_song(self) -> None:
-        """Handle analyze song action."""
-        if self._current_song is None or self._library is None:
-            QMessageBox.information(self, "Analyze", "Please select a song first.")
+    def _on_analyze_all(self) -> None:
+        """Handle analyze all songs action."""
+        if self._library is None:
+            QMessageBox.information(self, "Analyze All", "Please open a library first.")
             return
 
-        try:
-            song = self._library.load_song(self._current_song)
-            self.pattern_view.show_song_analysis(song)
-            self.status_bar.showMessage(f"Analyzed: {self._current_song.artist}")
-        except Exception as e:
-            QMessageBox.critical(self, "Analysis Error", f"Error analyzing song: {e}")
+        clips = self._library.list_clips()
+        if not clips:
+            QMessageBox.information(self, "Analyze All", "No songs in library.")
+            return
+
+        from PyQt6.QtWidgets import QProgressDialog
+
+        progress = QProgressDialog("Analyzing songs...", "Cancel", 0, len(clips), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        analyzed = 0
+        for i, clip in enumerate(clips):
+            if progress.wasCanceled():
+                break
+
+            progress.setValue(i)
+            progress.setLabelText(f"Analyzing: {clip.artist} - {Path(clip.source_path).stem}")
+
+            try:
+                song = self._library.load_song(clip)
+                self._ensure_song_analyzed(song)
+                analyzed += 1
+            except Exception:
+                pass  # Skip failed songs
+
+        progress.setValue(len(clips))
+        self.status_bar.showMessage(f"Analyzed {analyzed} of {len(clips)} songs")
 
     def _on_find_similar(self) -> None:
         """Handle find similar action."""

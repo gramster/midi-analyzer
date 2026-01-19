@@ -171,19 +171,17 @@ class PlaybackControlsWidget(QWidget):
 
             # Determine what to play
             if track_only and self._track:
-                self._player.play_track(self._track, self._song, options=options, blocking=False)
+                self._player.play_track(self._track, options)
             else:
                 # Get selected track or play all
                 track_id = self.track_selector.currentData()
                 if track_id is not None:
                     for track in self._song.tracks:
                         if track.track_id == track_id:
-                            self._player.play_track(
-                                track, self._song, options=options, blocking=False
-                            )
+                            self._player.play_track(track, options)
                             break
                 else:
-                    self._player.play_song(self._song, options=options, blocking=False)
+                    self._player.play_song(self._song, options)
 
             self._playing = True
             self.play_btn.setText("⏸")
