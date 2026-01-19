@@ -233,7 +233,8 @@ class MainWindow(QMainWindow):
         self.song_detail.track_selected.connect(self._on_track_selected)
         self.song_detail.play_track_requested.connect(self._on_play_track)
         self.song_detail.fetch_genres_requested.connect(self._on_fetch_genres)
-        self.playback_controls.play_clicked.connect(self._on_play_pause)
+        # Note: Don't connect play_clicked to _on_play_pause - that causes double-toggle
+        # The playback_controls widget already handles its own button clicks internally
         self.playback_controls.stop_clicked.connect(self._on_stop)
         self.playback_controls.position_changed.connect(self._on_playback_position_changed)
 
@@ -470,7 +471,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_play_pause(self) -> None:
-        """Handle play/pause action."""
+        """Handle play/pause action from menu/keyboard shortcut."""
         self.playback_controls.toggle_playback()
 
     def _on_stop(self) -> None:

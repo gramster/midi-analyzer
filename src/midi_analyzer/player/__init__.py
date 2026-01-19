@@ -524,6 +524,7 @@ class MidiPlayer:
                     min_start = start_time
 
         if not all_events:
+            print("play_song: no events to play!", flush=True)
             return
 
         # Normalize times (start from 0)
@@ -536,6 +537,8 @@ class MidiPlayer:
         # Calculate and store duration
         self._playback_duration = max(e[0] for e in all_events) if all_events else 0.0
         self._playback_start_time = time.time()
+        
+        print(f"play_song: {len(all_events)} events, duration={self._playback_duration:.2f}s", flush=True)
 
         # Play all events
         current_time = 0.0

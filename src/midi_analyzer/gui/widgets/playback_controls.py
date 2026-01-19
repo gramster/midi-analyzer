@@ -167,17 +167,25 @@ class PlaybackControlsWidget(QWidget):
         if self._song is None:
             return
 
-        # Wait for any previous playback thread to finish
+        # Stop any ongoing playback and wait for thread to finish
         if self._playback_thread is not None and self._playback_thread.is_alive():
             if self._player:
                 self._player.stop()
-            self._playback_thread.join(timeout=1.0)
+            self._playback_thread.join(timeout=2.0)
+            # If thread didn't finish, we have a problem but continue anyway
+            if self._playback_thread.is_alive():
+                print("Warning: playback thread didn't finish in time", flush=True)
 
         try:
             from midi_analyzer.player import MidiPlayer, PlaybackOptions
 
-            if self._player is None:
-                self._player = MidiPlayer()
+            # Create new player each time to ensure clean state
+            if self._player is not None:
+                try:
+                    self._player.close()
+                except Exception:
+                    pass
+            self._player = MidiPlayer()
 
             tempo = self.tempo_spinner.value()
             options = PlaybackOptions(tempo_bpm=tempo, use_role_instrument=True)
@@ -258,7 +266,15 @@ class PlaybackControlsWidget(QWidget):
 
     def _update_position(self) -> None:
         """Update position display during playback."""
-        if self._player is None or not self._playing:
+        if self._player is None:
+            return
+        
+        # Check if player is still actually playing
+        if not self._player.is_playing and self._playing:
+            # Player finished but we haven't received the signal yet
+            return
+        
+        if not self._playing:
             return
         
         try:
@@ -277,8 +293,8 @@ class PlaybackControlsWidget(QWidget):
             # Emit position for piano roll and other displays
             tempo = self.tempo_spinner.value()
             self.position_changed.emit(position, float(tempo))
-        except Exception as e:
-            print(f"Position update error: {e}", flush=True)
+        except Exception:
+            pass  # Ignore errors during position update
 
     def _update_duration(self) -> None:
         """Update the duration display."""
