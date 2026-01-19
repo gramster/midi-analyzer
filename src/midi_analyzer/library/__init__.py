@@ -62,6 +62,7 @@ class ClipQuery:
         role: Filter by track role.
         genre: Filter by genre (normalized).
         artist: Filter by artist name (case-insensitive partial match).
+        song_id: Filter by song ID (exact match).
         min_notes: Minimum note count.
         max_notes: Maximum note count.
         min_bars: Minimum duration in bars.
@@ -74,6 +75,7 @@ class ClipQuery:
     role: TrackRole | None = None
     genre: str | None = None
     artist: str | None = None
+    song_id: str | None = None
     min_notes: int | None = None
     max_notes: int | None = None
     min_bars: int | None = None
@@ -411,6 +413,10 @@ class ClipLibrary:
         if query.artist:
             sql += " AND artist LIKE ?"
             params.append(f"%{query.artist}%")
+
+        if query.song_id:
+            sql += " AND song_id = ?"
+            params.append(query.song_id)
 
         if query.min_notes is not None:
             sql += " AND note_count >= ?"

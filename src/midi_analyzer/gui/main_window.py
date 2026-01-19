@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
             if self._library and self._current_song:
                 # Get fresh clip data from the library
                 from midi_analyzer.library import ClipQuery
-                clips = self._library.query(ClipQuery(clip_id=self._current_song.clip_id))
+                clips = self._library.query(ClipQuery(song_id=self._current_song.song_id))
                 if clips:
                     self._current_song = clips[0]
                     song = self._library.load_song(self._current_song)
