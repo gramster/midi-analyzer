@@ -497,7 +497,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Analyze All", "Please open a library first.")
             return
 
-        clips = self._library.list_clips()
+        from midi_analyzer.library import ClipQuery
+        
+        clips = self._library.query(ClipQuery(limit=100000))
         if not clips:
             QMessageBox.information(self, "Analyze All", "No songs in library.")
             return
