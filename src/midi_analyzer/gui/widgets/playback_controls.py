@@ -167,6 +167,12 @@ class PlaybackControlsWidget(QWidget):
         if self._song is None:
             return
 
+        # Wait for any previous playback thread to finish
+        if self._playback_thread is not None and self._playback_thread.is_alive():
+            if self._player:
+                self._player.stop()
+            self._playback_thread.join(timeout=1.0)
+
         try:
             from midi_analyzer.player import MidiPlayer, PlaybackOptions
 
@@ -202,7 +208,7 @@ class PlaybackControlsWidget(QWidget):
                     elif target_track:
                         self._player.play_track(target_track, options)
                 except Exception as e:
-                    print(f"Playback thread error: {e}")
+                    print(f"Playback error: {e}", flush=True)
                 finally:
                     self._playback_finished.emit()
 
@@ -271,8 +277,8 @@ class PlaybackControlsWidget(QWidget):
             # Emit position for piano roll and other displays
             tempo = self.tempo_spinner.value()
             self.position_changed.emit(position, float(tempo))
-        except Exception:
-            pass  # Player may be closed
+        except Exception as e:
+            print(f"Position update error: {e}", flush=True)
 
     def _update_duration(self) -> None:
         """Update the duration display."""

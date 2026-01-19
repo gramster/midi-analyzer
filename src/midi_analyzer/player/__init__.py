@@ -477,11 +477,13 @@ class MidiPlayer:
             if is_drums:
                 channel = 9
             else:
+                # Skip channel 9 (reserved for drums) before assigning
+                if next_channel == 9:
+                    next_channel = 10
                 channel = next_channel
+                next_channel += 1
                 if next_channel == 9:
                     next_channel = 10  # Skip drum channel
-                else:
-                    next_channel += 1
                 if next_channel > 15:
                     next_channel = 0  # Wrap around (reuse channels if needed)
             
