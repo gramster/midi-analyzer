@@ -186,6 +186,48 @@ class ClipLibrary:
         """Context manager exit."""
         self.close()
 
+    def update_titles_from_metadata(
+        self,
+        progress_callback: Callable[[int, int, str], bool | None] | None = None,
+    ) -> int:
+        """Update titles for all clips by re-extracting metadata.
+        
+        This is useful for migrating existing databases that don't have titles.
+        
+        Args:
+            progress_callback: Optional callback(current, total, filename).
+                Returns False to cancel.
+        
+        Returns:
+            Number of clips updated.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT DISTINCT song_id, source_path FROM clips")
+        songs = cursor.fetchall()
+        
+        updated = 0
+        for i, (song_id, source_path) in enumerate(songs):
+            if progress_callback:
+                result = progress_callback(i + 1, len(songs), Path(source_path).name)
+                if result is False:
+                    break
+            
+            try:
+                extractor = MetadataExtractor()
+                metadata = extractor.extract(Path(source_path))
+                
+                if metadata.title:
+                    cursor.execute(
+                        "UPDATE clips SET title = ? WHERE song_id = ?",
+                        (metadata.title, song_id)
+                    )
+                    updated += cursor.rowcount
+            except Exception:
+                pass  # Skip files that can't be processed
+        
+        self.connection.commit()
+        return updated
+
     def index_file(
         self,
         file_path: Path | str,
