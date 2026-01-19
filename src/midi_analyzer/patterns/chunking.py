@@ -198,7 +198,7 @@ class BarChunker:
         Args:
             track: Track to segment.
             time_sig_map: Time signature map for the song.
-            chunk_size: Number of bars per chunk (1, 2, or 4).
+            chunk_size: Number of bars per chunk (1, 2, 4, 8, or 16).
             song_length_bars: Total bars in song (for partial final chunk).
 
         Yields:
@@ -277,13 +277,13 @@ class BarChunker:
 
         Args:
             song: Song to segment.
-            chunk_sizes: List of chunk sizes to generate (default: [1, 2, 4]).
+            chunk_sizes: List of chunk sizes to generate (default: [1, 2, 4, 8, 16]).
 
         Returns:
             Nested dict: {chunk_size: {track_id: [chunks]}}
         """
         if chunk_sizes is None:
-            chunk_sizes = [1, 2, 4]
+            chunk_sizes = [1, 2, 4, 8, 16]
 
         song_length = self.get_song_length_bars(song)
         result: dict[int, dict[int, list[BarChunk]]] = {}
@@ -331,7 +331,7 @@ def chunk_song(
 
     Args:
         song: Song to segment.
-        chunk_sizes: List of chunk sizes (default: [1, 2, 4]).
+        chunk_sizes: List of chunk sizes (default: [1, 2, 4, 8, 16]).
 
     Returns:
         Nested dict: {chunk_size: {track_id: [chunks]}}
