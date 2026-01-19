@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
@@ -281,15 +282,23 @@ class PatternViewWidget(QWidget):
 
     # Signals
     pattern_selected = pyqtSignal(str)  # pattern_id
+    _playback_finished = pyqtSignal()  # Internal signal for thread completion
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self._song: Song | None = None
         self._track: Track | None = None
+        self._detected_clusters: list = []
+        self._player = None
+        self._playback_thread: threading.Thread | None = None
+        self._playing_pattern: bool = False
 
         self._setup_ui()
         self._connect_signals()
+        
+        # Connect internal signal for thread-safe UI updates
+        self._playback_finished.connect(self._on_playback_finished)
 
     def _setup_ui(self) -> None:
         """Set up the UI."""
@@ -357,6 +366,30 @@ class PatternViewWidget(QWidget):
         pattern_widget = QWidget()
         pattern_layout = QVBoxLayout(pattern_widget)
 
+        # Pattern playback controls
+        playback_row = QHBoxLayout()
+        
+        self.pattern_play_btn = QPushButton("▶ Play")
+        self.pattern_play_btn.setFixedWidth(70)
+        self.pattern_play_btn.setToolTip("Play the selected pattern")
+        self.pattern_play_btn.setEnabled(False)
+        playback_row.addWidget(self.pattern_play_btn)
+        
+        self.pattern_stop_btn = QPushButton("⬛ Stop")
+        self.pattern_stop_btn.setFixedWidth(70)
+        self.pattern_stop_btn.setProperty("secondary", True)
+        self.pattern_stop_btn.setToolTip("Stop pattern playback")
+        self.pattern_stop_btn.setEnabled(False)
+        playback_row.addWidget(self.pattern_stop_btn)
+        
+        self.pattern_loop_cb = QCheckBox("Loop")
+        self.pattern_loop_cb.setChecked(True)
+        self.pattern_loop_cb.setToolTip("Loop the pattern continuously")
+        playback_row.addWidget(self.pattern_loop_cb)
+        
+        playback_row.addStretch()
+        pattern_layout.addLayout(playback_row)
+
         # Pattern summary label
         self.pattern_summary = QLabel("Select a track to detect patterns")
         pattern_layout.addWidget(self.pattern_summary)
@@ -393,6 +426,9 @@ class PatternViewWidget(QWidget):
         """Connect widget signals."""
         self.track_selector.currentIndexChanged.connect(self._on_track_changed)
         self.bars_spinner.valueChanged.connect(self._on_bars_changed)
+        self.pattern_play_btn.clicked.connect(self._on_pattern_play)
+        self.pattern_stop_btn.clicked.connect(self._on_pattern_stop)
+        self.pattern_table.itemSelectionChanged.connect(self._on_pattern_selection_changed)
 
     def _on_playback_position_changed(self, position_ratio: float) -> None:
         """Scroll piano roll to follow playback position.
@@ -478,6 +514,7 @@ class PatternViewWidget(QWidget):
 
     def clear(self) -> None:
         """Clear all views."""
+        self._stop_pattern_playback()
         self._song = None
         self._track = None
         self._detected_clusters = []
@@ -486,6 +523,8 @@ class PatternViewWidget(QWidget):
         self.arp_view.clear()
         self.pattern_summary.setText("Select a track to detect patterns")
         self.pattern_table.setRowCount(0)
+        self.pattern_play_btn.setEnabled(False)
+        self.pattern_stop_btn.setEnabled(False)
 
     def _show_all_tracks(self) -> None:
         """Show all tracks combined."""
@@ -638,3 +677,129 @@ class PatternViewWidget(QWidget):
             self.show_track_patterns(self._track, self._song)
         elif self._song:
             self._show_all_tracks()
+
+    def _on_pattern_selection_changed(self) -> None:
+        """Handle pattern table selection change."""
+        selected_rows = self.pattern_table.selectionModel().selectedRows()
+        has_selection = len(selected_rows) > 0 and len(self._detected_clusters) > 0
+        self.pattern_play_btn.setEnabled(has_selection and not self._playing_pattern)
+
+    def _get_selected_pattern_index(self) -> int | None:
+        """Get the index of the currently selected pattern."""
+        selected_rows = self.pattern_table.selectionModel().selectedRows()
+        if selected_rows and len(self._detected_clusters) > 0:
+            row = selected_rows[0].row()
+            if 0 <= row < len(self._detected_clusters):
+                return row
+        return None
+
+    def _on_pattern_play(self) -> None:
+        """Play the selected pattern."""
+        pattern_idx = self._get_selected_pattern_index()
+        if pattern_idx is None:
+            return
+        
+        chunk_size, cluster = self._detected_clusters[pattern_idx]
+        canonical = cluster.canonical
+        
+        if not canonical or not canonical.notes:
+            return
+        
+        # Stop any ongoing playback
+        self._stop_pattern_playback()
+        
+        try:
+            from midi_analyzer.player import MidiPlayer, PlaybackOptions
+            from midi_analyzer.models.core import Track
+            from midi_analyzer.analysis.roles import classify_track_role
+            
+            # Create a temporary track from the pattern notes
+            temp_track = Track(
+                track_id=0,
+                name="Pattern",
+                channel=self._track.channel if self._track else 0,
+                notes=list(canonical.notes),
+            )
+            
+            # Get role for instrument selection
+            if self._track:
+                role_probs = classify_track_role(self._track)
+                temp_track.features = self._track.features
+            else:
+                role_probs = classify_track_role(temp_track)
+            
+            # Create player
+            self._player = MidiPlayer()
+            
+            # Get tempo from song or default
+            tempo = 120.0
+            if self._song and self._song.tempo_map:
+                tempo = self._song.tempo_map[0].tempo_bpm
+            
+            loop = self.pattern_loop_cb.isChecked()
+            options = PlaybackOptions(
+                tempo_bpm=tempo,
+                use_role_instrument=True,
+                loop=loop,
+            )
+            
+            # Start playback in background thread
+            def play_in_thread():
+                try:
+                    self._player.play_track(temp_track, options)
+                except Exception as e:
+                    print(f"Pattern playback error: {e}", flush=True)
+                finally:
+                    self._playback_finished.emit()
+            
+            self._playback_thread = threading.Thread(target=play_in_thread, daemon=True)
+            self._playback_thread.start()
+            
+            self._playing_pattern = True
+            self.pattern_play_btn.setEnabled(False)
+            self.pattern_play_btn.setText("▶ Playing...")
+            self.pattern_stop_btn.setEnabled(True)
+            
+            # Also show pattern in piano roll
+            self._on_view_pattern(pattern_idx)
+            
+        except Exception as e:
+            print(f"Pattern playback error: {e}", flush=True)
+            self._playing_pattern = False
+            self.pattern_play_btn.setEnabled(True)
+            self.pattern_play_btn.setText("▶ Play")
+
+    def _on_pattern_stop(self) -> None:
+        """Stop pattern playback."""
+        self._stop_pattern_playback()
+
+    def _stop_pattern_playback(self) -> None:
+        """Stop any ongoing pattern playback."""
+        if self._playback_thread is not None and self._playback_thread.is_alive():
+            if self._player:
+                self._player.stop()
+            self._playback_thread.join(timeout=2.0)
+        
+        if self._player:
+            try:
+                self._player.close()
+            except Exception:
+                pass
+            self._player = None
+        
+        self._playing_pattern = False
+        self.pattern_play_btn.setText("▶ Play")
+        self.pattern_play_btn.setEnabled(self._get_selected_pattern_index() is not None)
+        self.pattern_stop_btn.setEnabled(False)
+
+    def _on_playback_finished(self) -> None:
+        """Handle playback thread completion (called from signal)."""
+        self._playing_pattern = False
+        self.pattern_play_btn.setText("▶ Play")
+        self.pattern_play_btn.setEnabled(self._get_selected_pattern_index() is not None)
+        self.pattern_stop_btn.setEnabled(False)
+
+    def closeEvent(self, event) -> None:
+        """Handle widget close."""
+        self._stop_pattern_playback()
+        super().closeEvent(event)
